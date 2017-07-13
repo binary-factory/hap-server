@@ -2,12 +2,10 @@
   "name": "hap-server",
   "version": "0.0.1",
   "devDependencies": {
-    "@types/bignumber.js": "^4.0.2",
-    "@types/node": "^6.0.81",
-    "install": "^0.10.1",
-    "npm": "^5.2.0"
+    "@types/bignum": "0.0.29",
+    "@types/node": "^6.0.81"
   },
   "dependencies": {
-    "bignumber.js": "^4.0.2"
+    "bignum": "^0.12.5"
   }
 }
