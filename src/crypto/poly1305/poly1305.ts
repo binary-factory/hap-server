@@ -1,18 +1,19 @@
 import * as assert from 'assert';
 import * as BigNum from 'bignum';
-import { SimpleCipher } from '../SimpleCipher';
+import { BlockChain } from "../BlockChain";
 
-export class Poly1305 implements SimpleCipher {
+export class Poly1305 extends BlockChain {
 
     private one = new BigNum(1);
     private accumulator = new BigNum(0);
     private r: BigNum;
     private s: BigNum;
     private p: BigNum;
-    private remainder: Buffer;
 
     constructor(private key: Buffer) {
-        assert.equal(key.length, 32, 'key have to be 128bits long');
+        super(16);
+        assert.equal(key.length, 32, 'key should have a length of 128bits.');
+
 
         const clampMask = new BigNum('0ffffffc0ffffffc0ffffffc0fffffff', 16);
         this.r = BigNum
@@ -29,12 +30,10 @@ export class Poly1305 implements SimpleCipher {
             });
 
         this.p = new BigNum('3fffffffffffffffffffffffffffffffb', 16);
-        console.log(this.p.toString(16));
     }
 
-    private accumulate(data: Buffer, offset: number = 0) {
-        let length = Math.min(data.length - offset, 16);
-        let block = data.slice(offset, offset + length);
+    protected processBlock(chunk: Buffer, start: number, end: number, length: number) {
+        let block = chunk.slice(start, end);
 
         let n = BigNum
             .fromBuffer(block, {
@@ -48,35 +47,7 @@ export class Poly1305 implements SimpleCipher {
             .mod(this.p);
     }
 
-    update(input: Buffer) {
-        // Respect the remainder of previous operation(s).
-        let data: Buffer;
-        if (this.remainder) {
-            data = Buffer.concat([this.remainder, input]);
-        } else {
-            data = input;
-        }
-
-        // Here we will encrypt whether we have a full block.
-        let blockCount = Math.floor(data.length / 16);
-        for (let i = 0; i < blockCount; i++) {
-            this.accumulate(data, i * 16);
-        }
-
-        // Do we have a remainder?
-        if (data.length % 16 !== 0) {
-            this.remainder = data.slice(blockCount * 16, data.length);
-        } else {
-            this.remainder = null;
-        }
-
-    }
-
-    final(): Buffer {
-        if (this.remainder) {
-            this.accumulate(this.remainder);
-        }
-
+    protected finalize(): Buffer {
         return this.accumulator
             .add(this.s)
             .toBuffer({

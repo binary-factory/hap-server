@@ -1,18 +1,19 @@
 import { SimpleCipher } from '../SimpleCipher';
 import * as assert from 'assert';
+import { BlockChain } from '../BlockChain';
 
-export class ChaCha20 implements SimpleCipher {
+export class ChaCha20 extends BlockChain {
 
     private state: Uint32Array;
     private message: Buffer;
-    private remainder: Buffer;
 
     constructor(private key: Buffer,
                 private nonce: Buffer,
                 private blockCounter: number = 0) {
 
-        assert.equal(key.length, 32, 'key should have a length of 256bit');
-        assert.equal(nonce.length, 12, 'key should have a length of 96bit');
+        super(64);
+        assert.equal(key.length, 32, 'key should have a length of 256bits.');
+        assert.equal(nonce.length === 12 || nonce.length === 8, true, 'nonce should have a length of 96bits or 64bits.');
 
         // The first four words (0-3) are constants.
         this.state = new Uint32Array(16);
@@ -28,8 +29,15 @@ export class ChaCha20 implements SimpleCipher {
         }
 
         this.state[12] = blockCounter;
-        for (let i = 0; i < 3; i++) {
-            this.state[13 + i] = nonce.readUInt32LE(i * 4);
+        if (nonce.length === 12) {
+            for (let i = 0; i < nonce.length / 4; i++) {
+                this.state[13 + i] = nonce.readUInt32LE(i * 4);
+            }
+        } else {
+            this.state[13] = 0;
+            for (let i = 0; i < nonce.length / 4; i++) {
+                this.state[14 + i] = nonce.readUInt32LE(i * 4);
+            }
         }
     }
 
@@ -85,18 +93,17 @@ export class ChaCha20 implements SimpleCipher {
 
         // Increase counter.
         this.state[12] += 1;
+        //TODO: Increment next 32bit if nonce is 64bit.
 
         return workingState;
     }
 
-    private encrypt(data: Buffer, offset: number = 0) {
-        let length = data.length - offset;
-
+    protected processBlock(chunk: Buffer, start: number, end: number, length: number) {
         // TODO: Replace serializeState with a mapped XOR to improve performance.
         let key = this.serializeState(this.nextState());
         let encrypted = Buffer.alloc(length);
         for (let i = 0; i < length; i++) {
-            encrypted[i] = data[offset + i] ^ key[i];
+            encrypted[i] = chunk[start + i] ^ key[i];
         }
 
         if (this.message) {
@@ -107,34 +114,7 @@ export class ChaCha20 implements SimpleCipher {
         }
     }
 
-    update(input: Buffer) {
-        // Respect the remainder of previous operation(s).
-        let data: Buffer;
-        if (this.remainder) {
-            data = Buffer.concat([this.remainder, input]);
-        } else {
-            data = input;
-        }
-
-        // Here we will encrypt whether we have a full block.
-        let blockCount = Math.floor(data.length / 64);
-        for (let i = 0; i < blockCount; i++) {
-            this.encrypt(data, i * 64);
-        }
-
-        // Do we have a remainder?
-        if (data.length % 64 !== 0) {
-            this.remainder = data.slice(blockCount * 64, data.length);
-        } else {
-            this.remainder = null;
-        }
-    }
-
-    final(): Buffer {
-        if (this.remainder) {
-            this.encrypt(this.remainder);
-        }
-
+    protected finalize(): Buffer {
         return this.message;
     }
 }

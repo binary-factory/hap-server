@@ -1,7 +1,7 @@
 import {ChaCha20} from './crypto/chacha20/chacha20';
 import { Poly1305 } from './crypto/poly1305/poly1305';
 
-/*
+
 let key = Buffer.alloc(32);
 for (let i = 0; i < key.length; i++) {
     key[i] = i;
@@ -15,12 +15,14 @@ input.toString('ascii');
 let cipher = new ChaCha20(key, nonce, 1);
 cipher.update(input);
 let encrypted = cipher.final();
-
+console.log(encrypted);
+/*
 let cipher2 = new ChaCha20(key, nonce, 1);
 cipher2.update(encrypted);
 console.log(cipher2.final());
 */
 
+/*
 let te = Buffer.alloc(32);
 let a = '85:d6:be:78:57:55:6d:33:7f:44:52:fe:42:d5:06:a8:01:03:80:8a:fb:0d:b2:fd:4a:bf:f6:af:41:49:f5:1b';
 let i = 0;
@@ -29,4 +31,4 @@ for (let b of a.split(':')) {
 }
 let poly = new Poly1305(te);
 poly.update(Buffer.from('Cryptographic Forum Research Group'));
-console.log(poly.final());
+console.log(poly.final());*/
