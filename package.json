@@ -3,9 +3,12 @@
   "version": "0.0.1",
   "devDependencies": {
     "@types/bignum": "0.0.29",
+    "@types/bonjour": "^3.5.4",
     "@types/node": "^6.0.81"
   },
   "dependencies": {
-    "bignum": "^0.12.5"
+    "bignum": "^0.12.5",
+    "bonjour": "^3.5.0",
+    "ed25519": "0.0.4"
   }
 }

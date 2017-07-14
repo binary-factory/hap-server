@@ -72,7 +72,7 @@ export class ChaCha20 extends BlockChain {
     }
 
     private serializeState(state: Uint32Array): Buffer {
-        let serialized = Buffer.alloc(64);
+        const serialized = Buffer.alloc(64);
         for (let i = 0; i < 16; i++) {
             serialized.writeUInt32LE(state[i], i * 4);
         }
@@ -81,7 +81,7 @@ export class ChaCha20 extends BlockChain {
     }
 
     private nextState(): Uint32Array {
-        let workingState = this.state.slice(0, this.state.length);
+        const workingState = this.state.slice(0, this.state.length);
 
         for (let i = 0; i < 10; i++) {
             this.innerBlock(workingState);
@@ -100,8 +100,8 @@ export class ChaCha20 extends BlockChain {
 
     protected processBlock(chunk: Buffer, start: number, end: number, length: number) {
         // TODO: Replace serializeState with a mapped XOR to improve performance.
-        let key = this.serializeState(this.nextState());
-        let encrypted = Buffer.alloc(length);
+        const key = this.serializeState(this.nextState());
+        const encrypted = Buffer.alloc(length);
         for (let i = 0; i < length; i++) {
             encrypted[i] = chunk[start + i] ^ key[i];
         }

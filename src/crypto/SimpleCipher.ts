@@ -4,5 +4,4 @@
 export interface SimpleCipher {
     update(chunk: Buffer);
     final(): Buffer;
-
 }

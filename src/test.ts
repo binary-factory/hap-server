@@ -1,7 +1,8 @@
 import {ChaCha20} from './crypto/chacha20/chacha20';
 import { Poly1305 } from './crypto/poly1305/poly1305';
+import { mdns } from './transport/mdns/mdns';
 
-
+/*
 let key = Buffer.alloc(32);
 for (let i = 0; i < key.length; i++) {
     key[i] = i;
@@ -32,3 +33,24 @@ for (let b of a.split(':')) {
 let poly = new Poly1305(te);
 poly.update(Buffer.from('Cryptographic Forum Research Group'));
 console.log(poly.final());*/
+
+
+
+import * as http from 'http';
+
+
+const requestHandler = (request, response) => {
+    console.log(request.url)
+    response.end('Hello Node.js Server!')
+}
+const server = http.createServer(requestHandler);
+
+server.listen(3000, (err) => {
+    if (err) {
+        return console.log('something bad happened', err)
+    }
+
+    console.log(`server is listening on ${3000}`)
+})
+
+mdns.startAdvertising();

@@ -14,7 +14,6 @@ export class Poly1305 extends BlockChain {
         super(16);
         assert.equal(key.length, 32, 'key should have a length of 128bits.');
 
-
         const clampMask = new BigNum('0ffffffc0ffffffc0ffffffc0fffffff', 16);
         this.r = BigNum
             .fromBuffer(key.slice(0, 16), {
@@ -33,9 +32,9 @@ export class Poly1305 extends BlockChain {
     }
 
     protected processBlock(chunk: Buffer, start: number, end: number, length: number) {
-        let block = chunk.slice(start, end);
+        const block = chunk.slice(start, end);
 
-        let n = BigNum
+        const n = BigNum
             .fromBuffer(block, {
                 endian: 'little',
                 size: 'auto'

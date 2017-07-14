@@ -1,5 +1,5 @@
 import { SimpleCipher } from './SimpleCipher';
-export abstract class BlockChain implements SimpleCipher{
+export abstract class BlockChain implements SimpleCipher {
 
     protected remainder: Buffer;
 
