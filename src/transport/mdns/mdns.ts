@@ -1,19 +1,15 @@
-import * as bonjour from 'bonjour';
+import * as _mdns from 'mdns';
 
 export namespace mdns {
-    const mdns = bonjour();
+
 
     export function startAdvertising() {
         let displayName = 'Test';
         let username = 'CC:22:3D:E3:CE:F6';
 
-        let a = bonjour();
-        let service = a.publish({
+        const options: _mdns.AdvertisementOptions = {
             name: displayName,
-            port: 3000,
-            protocol: 'tcp',
-            type: 'hap',
-            txt: {
+            txtRecord: {
                 md: displayName,
                 pv: "1.0",
                 id: username,
@@ -23,7 +19,15 @@ export namespace mdns {
                 "ci": "1",//this.accessoryInfo.category,
                 "sf": "1"//this.accessoryInfo.paired() ? "0" : "1" // "sf == 1" means "discoverable by HomeKit iOS clients"
             }
-        })
+        };
+
+        const advertisement = _mdns.createAdvertisement(_mdns.tcp('hap'), 3000, options, (error, service)=> {
+            if (error) {
+                console.error(error);
+                return;
+            }
+        });
+        advertisement.start();
 
     }
 }

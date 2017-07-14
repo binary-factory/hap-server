@@ -3,12 +3,13 @@
   "version": "0.0.1",
   "devDependencies": {
     "@types/bignum": "0.0.29",
-    "@types/bonjour": "^3.5.4",
-    "@types/node": "^6.0.81"
+    "@types/mdns": "0.0.31",
+    "@types/node": "^6.0.81",
+    "typescript": "^2.4.1"
   },
   "dependencies": {
     "bignum": "^0.12.5",
-    "bonjour": "^3.5.0",
-    "ed25519": "0.0.4"
+    "mdns": "^2.3.3",
+    "sodium": "^2.0.1"
   }
 }
