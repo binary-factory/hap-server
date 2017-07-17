@@ -17,7 +17,7 @@ export enum TLVTypes {
     /** Encrypted data with auth tag at end. Format: Bytes */
     EncryptedData = 0x05,
 
-    /** Encrypted data with auth tag at end. Format: Integer */
+    /** Encrypted data with auth tag at end. Format: Integer */ //TODO: Description wrong
     State = 0x06,
 
     /** Error code. Must only be present if error code is not 0. Format: Integer */

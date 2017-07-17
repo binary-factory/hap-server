@@ -1,38 +1,37 @@
-import {ChaCha20} from './crypto/chacha20/chacha20';
-import { Poly1305 } from './crypto/poly1305/poly1305';
-import { mdns } from './transport/mdns/mdns';
+import * as http from 'http';
 import * as url from 'url';
+import { Accessory } from './hap/accessory';
 /*
-let key = Buffer.alloc(32);
-for (let i = 0; i < key.length; i++) {
-    key[i] = i;
-}
-let nonce = Buffer.alloc(12);
-nonce.fill(0);
-nonce[7] = 0x4a;
+ let key = Buffer.alloc(32);
+ for (let i = 0; i < key.length; i++) {
+ key[i] = i;
+ }
+ let nonce = Buffer.alloc(12);
+ nonce.fill(0);
+ nonce[7] = 0x4a;
 
-let input = Buffer.from(`Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.`);
-input.toString('ascii');
-let cipher = new ChaCha20(key, nonce, 1);
-cipher.update(input);
-let encrypted = cipher.final();
-console.log(encrypted);
-/*
-let cipher2 = new ChaCha20(key, nonce, 1);
-cipher2.update(encrypted);
-console.log(cipher2.final());
-*/
+ let input = Buffer.from(`Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.`);
+ input.toString('ascii');
+ let cipher = new ChaCha20(key, nonce, 1);
+ cipher.update(input);
+ let encrypted = cipher.final();
+ console.log(encrypted);
+ /*
+ let cipher2 = new ChaCha20(key, nonce, 1);
+ cipher2.update(encrypted);
+ console.log(cipher2.final());
+ */
 
 /*
-let te = Buffer.alloc(32);
-let a = '85:d6:be:78:57:55:6d:33:7f:44:52:fe:42:d5:06:a8:01:03:80:8a:fb:0d:b2:fd:4a:bf:f6:af:41:49:f5:1b';
-let i = 0;
-for (let b of a.split(':')) {
-    te[i++] = parseInt(`0x${b}`);
-}
-let poly = new Poly1305(te);
-poly.update(Buffer.from('Cryptographic Forum Research Group'));
-console.log(poly.final());*/
+ let te = Buffer.alloc(32);
+ let a = '85:d6:be:78:57:55:6d:33:7f:44:52:fe:42:d5:06:a8:01:03:80:8a:fb:0d:b2:fd:4a:bf:f6:af:41:49:f5:1b';
+ let i = 0;
+ for (let b of a.split(':')) {
+ te[i++] = parseInt(`0x${b}`);
+ }
+ let poly = new Poly1305(te);
+ poly.update(Buffer.from('Cryptographic Forum Research Group'));
+ console.log(poly.final());*/
 
 function hex(str: string): Buffer {
     let hexValues = str.split(/[ :]+/);
@@ -56,36 +55,13 @@ const message = hex(`4c 61 64 69 65 73 20 61 6e 64 20 47 65 6e 74 6c
    74 2e`);
 const aad = hex('50 51 52 53 c0 c1 c2 c3 c4 c5 c6 c7');
 const key = hex('80 81 82 83 84 85 86 87 88 89 8a 8b 8c 8d 8e 8f 90 91 92 93 94 95 96 97 98 99 9a 9b 9c 9d 9e 9f');
-const nonce = hex('07 00 00 00 40 41 42 43 44 45 46 47'); console.log(nonce.length);
-const ciphertext = Buffer.alloc(message.length + sodium.api.crypto_aead_chacha20poly1305_ietf_ABYTES);
+const nonce = hex('07 00 00 00 40 41 42 43 44 45 46 47');
+//console.log(nonce.length);
+//const ciphertext = Buffer.alloc(message.length + sodium.api.crypto_aead_chacha20poly1305_ietf_ABYTES);
 
 let res = sodium.api.crypto_aead_chacha20poly1305_ietf_encrypt(message, aad, nonce, key);
-console.log(res);
-
-import * as http from 'http';
+//console.log(res);
 
 
-const requestHandler = (request, response) => {
-    const pathname = url.parse(request.url).pathname;
-
-    console.log(pathname);
-
-    const chunks = [];
-    request.on('data', (chunk) => {
-        chunks.push(chunk);
-    }).on('end', () => {
-        const body = Buffer.concat(chunks);
-        console.log(body);
-    });
-}
-const server = http.createServer(requestHandler);
-
-server.listen(3000, (err) => {
-    if (err) {
-        return console.log('something bad happened', err)
-    }
-
-    console.log(`server is listening on ${3000}`)
-})
-
-mdns.startAdvertising();
+const accessory = new Accessory('CC:22:3D:E3:CE:F6', 'test', 1);
+accessory.start().catch((err) => console.log('error botting device', err));
