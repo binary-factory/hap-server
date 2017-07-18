@@ -25,9 +25,10 @@ export class HTTPServer {
 
         request.on('end', () => {
             const pathname = url.parse(request.url).pathname;
+            console.log(pathname);
             const body = Buffer.concat(chunks);
 
-            // Route request
+            // Route request.
             const matchingUrlRoutes = this.routes.filter((route) => route.pathname === pathname);
             if (matchingUrlRoutes.length) {
 

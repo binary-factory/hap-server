@@ -5,19 +5,19 @@ export namespace TLV {
         let output: Buffer = Buffer.alloc(0);
 
         tlv.forEach((value, type) => {
-            let bytesLeft = value.length;
             let cursor = 0;
+            let bytesLeft = value.length;
             while (bytesLeft > 0) {
-                const bytes = Math.min(bytesLeft, 255);
+                const bytes = Math.min(bytesLeft, 0xff);
                 const tlvData = Buffer.alloc(2 + bytes);
                 tlvData.writeUInt8(type, 0);
-                tlvData.writeUInt8(type, 1);
+                tlvData.writeUInt8(bytes, 1);
                 for (let i = 0; i < bytes; i++) {
                     tlvData[2 + i] = value[cursor++];
                 }
 
-                bytesLeft -= bytes;
                 output = Buffer.concat([output, tlvData]);
+                bytesLeft -= bytes;
             }
         });
 

@@ -2,7 +2,7 @@ import * as crypto from 'crypto';
 
 export function hkdf(algorithm: string, material: Buffer, salt: Buffer, info: Buffer, length: number) {
     const prk = crypto
-        .createHash(algorithm)
+        .createHmac(algorithm, salt)
         .update(material)
         .digest();
 
