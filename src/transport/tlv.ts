@@ -1,4 +1,4 @@
-export namespace TLV {
+//export default namespace tlv {
     export type TLVMap = Map<number, Buffer>;
 
     export function encode(tlv: TLVMap): Buffer {
@@ -51,4 +51,5 @@ export namespace TLV {
 
         return parsed;
     }
-}
+
+//}

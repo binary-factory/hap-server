@@ -1,4 +1,5 @@
-import { Accessory } from './hap/accessory';
+import { HAPServer } from './transport/HAPServer';
 
-const accessory = new Accessory('CC:22:3D:E3:CE:F6', 'test', 1);
-accessory.start().catch((err) => console.log('error botting device', err));
+const accessory = new HAPServer('CC:22:3D:E3:CE:F3', 'test', 1);
+accessory.listen().catch((err) => console.log('error botting device', err));
+

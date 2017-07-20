@@ -1,13 +1,11 @@
 import * as net from 'net';
-import * as http from 'http';
 
 export class SessionManager<T> {
 
     sessions: Map<net.Socket, T> = new Map();
 
-    constructor(
-        private server: http.Server,
-        private defaultSession: T) {
+    constructor(private server: net.Server,
+                private defaultSession: T) {
 
         server.on('connection', this.handleConnect.bind(this));
     }

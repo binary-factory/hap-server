@@ -45,6 +45,6 @@ export enum TLVTypes {
     /** Last fragment of data. Format: Bytes */
     FragmentLast = 0x0d,
 
-    /** Zero-length TLV that separates different TLVs in a list. Format: Null */
+        /** Zero-length tlv that separates different TLVs in a list. Format: Null */
     Seperator = 0xff
 }
