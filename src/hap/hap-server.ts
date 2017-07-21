@@ -4,36 +4,64 @@ import * as url from 'url';
 import { hkdf } from '../crypto/hkdf/hkdf';
 import { SRPConfigurations } from '../crypto/srp/configurations';
 import { SecureRemotePassword } from '../crypto/srp/srp';
-import { Advertiser } from './advertiser';
-import { ErrorCodes } from './constants/error-codes';
-import { HTTPStatusCodes } from './constants/http-status-codes';
-import { TLVTypes } from './constants/tlv-types';
-import { HAPUrls } from './constants/urls';
+import { MemoryStorage } from '../services/memory-storage';
+import { Storage } from '../services/storage';
 import { HTTPHandler } from '../transport/http-handler';
 import { HttpServer } from '../transport/http-server';
 import { NetProxy, ProxyConnection } from '../transport/net-proxy';
 import { ProxyHandler } from '../transport/proxy-handler';
 import * as tlv from '../transport/tlv';
 import { TLVMap } from '../transport/tlv';
-import { SimpleLogger } from '../util/simple-logger';
-import { PairState } from './constants/pair-state';
+import { Advertiser } from './advertiser';
+import { ErrorCodes } from './constants/error-codes';
+import { HTTPStatusCodes } from './constants/http-status-codes';
 import { PairMethods } from './constants/pair-methods';
+//import { SimpleLogger } from '../util/simple-logger';
+import { PairState } from './constants/pair-state';
+import { TLVTypes } from './constants/tlv-types';
+import { HAPUrls } from './constants/urls';
 import { VerifyState } from './constants/verify-state';
 
 const sodium = require('sodium');
 
-export interface HAPSession {
-    pairState: PairState;
-    verifyState: VerifyState;
-    authenticationAttempts: number;
-    srp?: SecureRemotePassword;
-    sessionKey?: Buffer;
-    sharedSecret?: Buffer;
+
+export interface AccessoryLongTimeKeyPair {
+    publicKey: Buffer;
+    privateKey: Buffer;
 }
 
-const defaultSession: HAPSession = {
-    pairState: PairState.INITIAL,
-    verifyState: VerifyState.INITIAL,
+export interface Pairing {
+    devicePairingId: Buffer;
+    deviceLongTimePublicKey: Buffer;
+}
+
+interface PairSetupContext {
+    state: PairState;
+    srp?: SecureRemotePassword;
+    sharedSecret?: Buffer;
+    sessionKey?: Buffer;
+}
+
+interface PairVerifyContext {
+    state: VerifyState;
+    devicePublicKey?: Buffer;
+    sharedSecret?: Buffer;
+    sessionKey?: Buffer;
+}
+
+export interface Session {
+    pairContext: PairSetupContext;
+    verifyContext: PairVerifyContext;
+    authenticationAttempts: number;
+}
+
+const defaultSession: Session = {
+    pairContext: {
+        state: PairState.INITIAL
+    },
+    verifyContext: {
+        state: VerifyState.INITIAL
+    },
     authenticationAttempts: 0
 };
 
@@ -41,7 +69,7 @@ interface Route {
     pathname: HAPUrls;
     method: string;
     contentType: HAPContentTypes;
-    handler: (session: HAPSession, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap | any) => Promise<void>;
+    handler: (session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap | any) => Promise<void>;
 }
 
 enum HAPContentTypes {
@@ -50,17 +78,11 @@ enum HAPContentTypes {
     EMPTY = ''
 }
 
-interface HAPPairing {
-    accessoryPairingId: Buffer;
-    accessoryLTPK: Buffer;
-    accessoryLTSK: Buffer;
-    iOSDevicePairingId: Buffer;
-    iOSDeviceLTPK: Buffer;
-}
-
 export class HAPServer implements ProxyHandler, HTTPHandler {
 
-    private logger: SimpleLogger = new SimpleLogger('HAPServer');
+    //private logger: SimpleLogger = new SimpleLogger('HAPServer');
+
+    private storage: Storage = new MemoryStorage();
 
     private proxyServer: NetProxy = new NetProxy(this);
 
@@ -68,9 +90,9 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
 
     private advertiser: Advertiser;
 
-    private sessions: Map<number, HAPSession> = new Map();
+    private sessions: Map<number, Session> = new Map();
 
-    private pairing: HAPPairing;
+    private longTimeKeyPair: AccessoryLongTimeKeyPair;
 
     public constructor(private deviceId: string,
                        private modelName: string,
@@ -108,7 +130,6 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         }
 
         const session = this.sessions.get(proxyConnection.rayId);
-
 
         // Route request.
         const requestPathname = url.parse(request.url).pathname;
@@ -221,14 +242,39 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         response.end();
     }
 
+    async start() {
+        this.longTimeKeyPair = await this.getLongTimeKeyPair();
 
-    async listen() {
+        // TODO: Move to index because will be singleton.
+        const storageConnected = await  this.storage.connect();
+        if (!storageConnected) {
+            throw new Error('Storage not connected!');
+        }
 
         const httpAddress = await this.httpServer.listen(0, '127.0.0.1');
 
         const proxyAddress = await this.proxyServer.listen(httpAddress.address, httpAddress.port);
 
         const service = await this.advertiser.start(proxyAddress.port);
+
+    }
+
+    private async getLongTimeKeyPair(): Promise<AccessoryLongTimeKeyPair> {
+        // Generate accessories Ed25519 long-term public key, AccessoryLTPK, and long-term secret key, AccessoryLTSK.
+        let longTimeKeyPair = await this.storage.getAccessoryLongTimeKeyPair(this.deviceId);
+        if (!longTimeKeyPair) {
+            const keyPair = sodium.api.crypto_sign_ed25519_keypair();
+            if (!keyPair) {
+                throw new Error('could not generate key pairs.');
+            }
+
+            longTimeKeyPair = {
+                publicKey: keyPair.publicKey,
+                privateKey: keyPair.secretKey
+            };
+        }
+
+        return longTimeKeyPair;
     }
 
     private handleProxyConnect(connection: ProxyConnection) {
@@ -262,7 +308,7 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         return true;
     }
 
-    private async handlePairSetup(session: HAPSession, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap): Promise<void> {
+    private async handlePairSetup(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap): Promise<void> {
         console.log('handlePairSetup');
         const tlvTypes = [TLVTypes.State];
         if (!this.assignTLVContains(body, tlvTypes)) {
@@ -271,10 +317,8 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         }
 
         const state: PairState = body.get(TLVTypes.State).readUInt8(0);
-        console.log('state', state);
-        if (state !== (session.pairState + 1)) {
-            console.log('state missmatch', session.pairState);
-            session.pairState = PairState.INITIAL;
+        if (state !== (session.pairContext.state + 1)) {
+            session.pairContext = defaultSession.pairContext;
             response.writeHead(HTTPStatusCodes.BadRequest);
             return;
         }
@@ -294,7 +338,7 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         }
     }
 
-    private async handlePairSetupStepOne(session: HAPSession, request: http.IncomingMessage, response: http.ServerResponse, body: TLVMap) {
+    private async handlePairSetupStepOne(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: TLVMap) {
         const tlvTypes = [TLVTypes.Method];
         if (!this.assignTLVContains(body, tlvTypes)) {
             response.writeHead(HTTPStatusCodes.BadRequest);
@@ -316,11 +360,11 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         const password = '123-99-123'; // TODO: As property.
         const serverPrivateKey = crypto.randomBytes(16);
         const salt = crypto.randomBytes(16);
-        session.srp = new SecureRemotePassword(username, password, salt, SRPConfigurations[3072], serverPrivateKey);
+        const srp = new SecureRemotePassword(username, password, salt, SRPConfigurations[3072], serverPrivateKey);
 
 
         const state = Buffer.from([PairState.M2]);
-        const publicKey = session.srp.getServerPublicKey();
+        const publicKey = session.pairContext.srp.getServerPublicKey();
 
         const responseTLV: tlv.TLVMap = new Map();
         responseTLV.set(TLVTypes.State, state);
@@ -330,26 +374,27 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8 });
         response.write(tlv.encode(responseTLV));
 
-        session.pairState = PairState.M2;
+        session.pairContext.state = PairState.M2;
+        session.pairContext.srp = srp;
     }
 
-    private async handlePairSetupStepThree(session: HAPSession, request: http.IncomingMessage, response: http.ServerResponse, body: TLVMap) {
+    private async handlePairSetupStepThree(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: TLVMap) {
+        const srp = session.pairContext.srp;
         const tlvTypes = [TLVTypes.PublicKey, TLVTypes.Proof];
         if (!this.assignTLVContains(body, tlvTypes)) {
             response.writeHead(HTTPStatusCodes.BadRequest);
             return;
         }
 
-        const publicKey = body.get(TLVTypes.PublicKey);
-        const clientProof = body.get(TLVTypes.Proof);
+        const deviceSRPPublicKey = body.get(TLVTypes.PublicKey);
+        const iosDeviceSRPProof = body.get(TLVTypes.Proof);
 
         // Verify client proof.
-        const srp = session.srp;
-        srp.setClientPublicKey(publicKey);
-        const sharedSecret = session.srp.getSessionKey();
-        const verified = srp.verifyProof(clientProof);
+        srp.setClientPublicKey(deviceSRPPublicKey);
+        const sharedSecret = srp.getSessionKey();
+        const verified = srp.verifyProof(iosDeviceSRPProof);
         if (!verified) {
-            session.pairState = PairState.INITIAL;
+            session.pairContext = defaultSession.pairContext;
 
             const responseTLV: tlv.TLVMap = new Map();
             responseTLV.set(TLVTypes.State, Buffer.from([PairState.M4]));
@@ -361,23 +406,25 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         }
 
         // Derive session key from SRP shared secret.
-        const salt = Buffer.from('Pair-Setup-Encrypt-Salt');
-        const info = Buffer.from('Pair-Setup-Encrypt-Info');
-        session.sessionKey = hkdf('sha512', sharedSecret, salt, info, 32);
-        session.sharedSecret = sharedSecret;
+        const pairSetupEncryptSalt = Buffer.from('Pair-Setup-Encrypt-Salt');
+        const pairSetupEncryptInfo = Buffer.from('Pair-Setup-Encrypt-Info');
+        const sessionKey = hkdf('sha512', sharedSecret, pairSetupEncryptSalt, pairSetupEncryptInfo, 32);
 
-        const serverProof = srp.getProof();
+
+        const accessorySRPProof = srp.getProof();
         const responseTLV: tlv.TLVMap = new Map();
         responseTLV.set(TLVTypes.State, Buffer.from([0x04]));
-        responseTLV.set(TLVTypes.Proof, serverProof);
+        responseTLV.set(TLVTypes.Proof, accessorySRPProof);
 
         response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8 });
         response.write(tlv.encode(responseTLV));
 
-        session.pairState = PairState.M4;
+        session.pairContext.state = PairState.M4;
+        session.pairContext.sharedSecret = sharedSecret;
+        session.pairContext.sessionKey = sessionKey;
     }
 
-    private async handlePairSetupStepFive(session: HAPSession, request: http.IncomingMessage, response: http.ServerResponse, body: TLVMap) {
+    private async handlePairSetupStepFive(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: TLVMap) {
         const tlvTypes = [TLVTypes.EncryptedData];
         if (!this.assignTLVContains(body, tlvTypes)) {
             response.writeHead(HTTPStatusCodes.BadRequest);
@@ -387,7 +434,7 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         // Check for any errors.
         const clientError = body.get(TLVTypes.Error);
         if (clientError) {
-            session.pairState = PairState.INITIAL;
+            session.pairContext = defaultSession.pairContext;
             return;
         }
 
@@ -395,9 +442,9 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
 
         // Decrypt sub-tlv.
         const nonceM5 = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x00]), Buffer.from('PS-Msg05')]);
-        const decryptedData = sodium.api.crypto_aead_chacha20poly1305_ietf_decrypt(encryptedData, null, nonceM5, session.sessionKey);
+        const decryptedData = sodium.api.crypto_aead_chacha20poly1305_ietf_decrypt(encryptedData, null, nonceM5, session.pairContext.sessionKey);
         if (!decryptedData) {
-            session.pairState = PairState.INITIAL;
+            session.pairContext = defaultSession.pairContext;
 
             const responseTLV: tlv.TLVMap = new Map();
             responseTLV.set(TLVTypes.State, Buffer.from([PairState.M5]));
@@ -410,20 +457,20 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
 
         // Decode sub-tlv.
         const subTLV = tlv.decode(decryptedData);
-        const iOSDevicePairingId = subTLV.get(TLVTypes.Identifier);
-        const iOSDeviceLTPK = subTLV.get(TLVTypes.PublicKey);
-        const iOSDeviceSignature = subTLV.get(TLVTypes.Signature);
+        const devicePairingId = subTLV.get(TLVTypes.Identifier);
+        const deviceLongTimePublicKey = subTLV.get(TLVTypes.PublicKey);
+        const deviceSignature = subTLV.get(TLVTypes.Signature);
 
-        // Derive iOSDeviceX from the SRP shared secret.
-        const saltDevice = Buffer.from('Pair-Setup-Controller-Sign-Salt');
-        const infoDevice = Buffer.from('Pair-Setup-Controller-Sign-Info');
-        const iOSDeviceX = hkdf('sha512', session.sharedSecret, saltDevice, infoDevice, 32);
+        // Derive deviceX from the SRP shared secret.
+        const pairSetupControllerSignSalt = Buffer.from('Pair-Setup-Controller-Sign-Salt');
+        const pairSetupControllerSignInfo = Buffer.from('Pair-Setup-Controller-Sign-Info');
+        const deviceX = hkdf('sha512', session.pairContext.sharedSecret, pairSetupControllerSignSalt, pairSetupControllerSignInfo, 32);
 
-        // Verify the signature of the constructed iOSDeviceInfo with the iOSDeviceLTPK from the decrypted sub-tlv.
-        const iOSDeviceInfo = Buffer.concat([iOSDeviceX, iOSDevicePairingId, iOSDeviceLTPK]);
-        const verified = sodium.api.crypto_sign_ed25519_verify_detached(iOSDeviceSignature, iOSDeviceInfo, iOSDeviceLTPK);
+        // Verify the signature of the constructed deviceInfo with the deviceLTPK from the decrypted sub-tlv.
+        const deviceInfo = Buffer.concat([deviceX, devicePairingId, deviceLongTimePublicKey]);
+        const verified = sodium.api.crypto_sign_ed25519_verify_detached(deviceSignature, deviceInfo, deviceLongTimePublicKey);
         if (!verified) {
-            session.pairState = PairState.INITIAL;
+            session.pairContext = defaultSession.pairContext;
 
             const responseTLV: tlv.TLVMap = new Map();
             responseTLV.set(TLVTypes.State, Buffer.from([PairState.M6]));
@@ -434,35 +481,30 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
             return;
         }
 
-        // Generate accessories Ed25519 long-term public key, AccessoryLTPK, and long-term secret key, AccessoryLTSK.
-        const keyPair = sodium.api.crypto_sign_ed25519_keypair();
-        if (!keyPair) {
-            throw new Error('could not generate key pairs.');
-        }
-        const accessoryLTPK = keyPair.publicKey;
-        const accessoryLTSK = keyPair.secretKey;
+        const accessoryLongTimePublicKey = this.longTimeKeyPair.publicKey;
+        const accessoryLongTimePrivateKey = this.longTimeKeyPair.privateKey;
 
         // Derive AccessoryX from the SRP shared secret.
-        const saltAccessory = Buffer.from('Pair-Setup-Accessory-Sign-Salt');
-        const infoAccessory = Buffer.from('Pair-Setup-Accessory-Sign-Info');
-        const accessoryX = hkdf('sha512', session.sharedSecret, saltAccessory, infoAccessory, 32);
+        const pairSetupAccessorySignSalt = Buffer.from('Pair-Setup-Accessory-Sign-Salt');
+        const pairSetupAccessorySignInfo = Buffer.from('Pair-Setup-Accessory-Sign-Info');
+        const accessoryX = hkdf('sha512', session.pairContext.sharedSecret, pairSetupAccessorySignSalt, pairSetupAccessorySignInfo, 32);
 
         // Signing AccessorySignature.
         const accessoryPairingId = Buffer.from(this.deviceId);
-        const accessoryInfo = Buffer.concat([accessoryX, accessoryPairingId, accessoryLTPK]);
-        const accessorySignature = sodium.api.crypto_sign_ed25519_detached(accessoryInfo, accessoryLTSK);
+        const accessoryInfo = Buffer.concat([accessoryX, accessoryPairingId, accessoryLongTimePublicKey]);
+        const accessorySignature = sodium.api.crypto_sign_ed25519_detached(accessoryInfo, accessoryLongTimePrivateKey);
         if (!accessorySignature) {
             throw new Error('could not sign accessoryInfo.');
         }
 
         const subTLV2 = new Map();
         subTLV2.set(TLVTypes.Identifier, accessoryPairingId);
-        subTLV2.set(TLVTypes.PublicKey, accessoryLTPK);
+        subTLV2.set(TLVTypes.PublicKey, accessoryLongTimePublicKey);
         subTLV2.set(TLVTypes.Signature, accessorySignature);
         const subTLVData = tlv.encode(subTLV2);
 
         const nonceM6 = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x00]), Buffer.from('PS-Msg06')]);
-        const encryptedSubTLV = sodium.api.crypto_aead_chacha20poly1305_ietf_encrypt(subTLVData, null, nonceM6, session.sessionKey);
+        const encryptedSubTLV = sodium.api.crypto_aead_chacha20poly1305_ietf_encrypt(subTLVData, null, nonceM6, session.pairContext.sessionKey);
         if (!encryptedSubTLV) {
             throw new Error('could not encrypt sub-tlv.');
         }
@@ -474,22 +516,15 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8 });
         response.write(tlv.encode(responseTLV));
 
-        session.pairState = PairState.M6;
+        const saved = await this.storage.persistControllerLongTimePublicKey(devicePairingId.toString(), deviceLongTimePublicKey);
+        if (!saved) {
+            throw new Error('could not write device long time key to storage.');
+        }
 
-        // Save pairing.
-        const pairing: HAPPairing = {
-            accessoryPairingId,
-            accessoryLTPK,
-            accessoryLTSK,
-            iOSDevicePairingId,
-            iOSDeviceLTPK,
-        };
-
-        // TODO: Really save!
-        this.pairing = pairing;
+        session.pairContext.state = PairState.M6;
     }
 
-    private async handlePairVerify(session: HAPSession, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap): Promise<void> {
+    private async handlePairVerify(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap): Promise<void> {
         const tlvTypes = [TLVTypes.State];
         if (!this.assignTLVContains(body, tlvTypes)) {
             response.writeHead(HTTPStatusCodes.BadRequest);
@@ -498,8 +533,8 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
 
         const state: VerifyState = body.get(TLVTypes.State).readUInt8(0);
         console.log('verify step', state);
-        if (state !== (session.verifyState + 1)) {
-            session.verifyState = VerifyState.INITIAL;
+        if (state !== (session.verifyContext.state + 1)) {
+            session.verifyContext = defaultSession.verifyContext;
             response.writeHead(HTTPStatusCodes.BadRequest);
             return;
         }
@@ -515,7 +550,7 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         }
     }
 
-    private async handlePairVerifyStepOne(session: HAPSession, request: http.IncomingMessage, response: http.ServerResponse, body: TLVMap) {
+    private async handlePairVerifyStepOne(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: TLVMap) {
         const tlvTypes = [TLVTypes.PublicKey];
         if (!this.assignTLVContains(body, tlvTypes)) {
             response.writeHead(HTTPStatusCodes.BadRequest);
@@ -528,22 +563,23 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         if (!keyPair) {
             throw new Error('could not generate key pairs.');
         }
-        const accessoryPK = sodium.api.crypto_sign_ed25519_pk_to_curve25519(keyPair.publicKey);
-        const accessorySK = sodium.api.crypto_sign_ed25519_sk_to_curve25519(keyPair.secretKey);
-        session.sharedSecret = sodium.api.crypto_scalarmult_curve25519(accessorySK, clientPublicKey);
+        const accessoryPublicKey = sodium.api.crypto_sign_ed25519_pk_to_curve25519(keyPair.publicKey);
+        const accessoryPrivateKey = sodium.api.crypto_sign_ed25519_sk_to_curve25519(keyPair.secretKey);
+        const sharedSecret = sodium.api.crypto_scalarmult_curve25519(accessoryPrivateKey, clientPublicKey);
 
-        const accessoryPairingId = this.pairing.accessoryPairingId;
-        const accessoryInfo = Buffer.concat([accessoryPK, accessoryPairingId, clientPublicKey]);
-        const accessoryLTSK = this.pairing.accessoryLTSK;
-        const accessorySignature = sodium.api.crypto_sign_ed25519_detached(accessoryInfo, accessoryLTSK);
+        const accessoryLongTimePrivateKey = this.longTimeKeyPair.privateKey;
+
+        const accessoryPairingId = Buffer.from([this.deviceId]);
+        const accessoryInfo = Buffer.concat([accessoryPublicKey, accessoryPairingId, clientPublicKey]);
+        const accessorySignature = sodium.api.crypto_sign_ed25519_detached(accessoryInfo, accessoryLongTimePrivateKey);
         if (!accessorySignature) {
             throw new Error('could not sign accessoryInfo.');
         }
 
         // Derive shared key from the Curve25519 shared secret.
-        const salt = Buffer.from('Pair-Verify-Encrypt-Salt');
-        const info = Buffer.from('Pair-Verify-Encrypt-Info');
-        session.sessionKey = hkdf('sha512', session.sharedSecret, salt, info, 32);
+        const pairVerifyEncryptSalt = Buffer.from('Pair-Verify-Encrypt-Salt');
+        const pairVerifyEncryptInfo = Buffer.from('Pair-Verify-Encrypt-Info');
+        const sessionKey = hkdf('sha512', sharedSecret, pairVerifyEncryptSalt, pairVerifyEncryptInfo, 32);
 
         const subTLV = new Map();
         subTLV.set(TLVTypes.Identifier, accessoryPairingId);
@@ -551,23 +587,27 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         const subTLVData = tlv.encode(subTLV);
 
         const nonce = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x00]), Buffer.from('PV-Msg02')]);
-        const encryptedSubTLV = sodium.api.crypto_aead_chacha20poly1305_ietf_encrypt(subTLVData, null, nonce, session.sessionKey);
+        const encryptedSubTLV = sodium.api.crypto_aead_chacha20poly1305_ietf_encrypt(subTLVData, null, nonce, sessionKey);
         if (!encryptedSubTLV) {
             throw new Error('could not encrypt sub-tlv.');
         }
 
         const responseTLV: tlv.TLVMap = new Map();
         responseTLV.set(TLVTypes.State, Buffer.from([VerifyState.M2]));
-        responseTLV.set(TLVTypes.PublicKey, accessoryPK);
+        responseTLV.set(TLVTypes.PublicKey, accessoryPublicKey);
         responseTLV.set(TLVTypes.EncryptedData, encryptedSubTLV);
 
         response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8 });
         response.write(tlv.encode(responseTLV));
 
-        session.verifyState = VerifyState.M2;
+        session.verifyContext.state = VerifyState.M2;
+        session.verifyContext.sharedSecret = sharedSecret;
+        session.verifyContext.sessionKey = sessionKey;
     }
 
-    private async handlePairVerifyStepThree(session: HAPSession, request: http.IncomingMessage, response: http.ServerResponse, body: TLVMap) {
+    private async handlePairVerifyStepThree(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: TLVMap) {
+        const sessionKey = session.verifyContext.sessionKey;
+
         const tlvTypes = [TLVTypes.EncryptedData];
         if (!this.assignTLVContains(body, tlvTypes)) {
             response.writeHead(HTTPStatusCodes.BadRequest);
@@ -578,9 +618,9 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
 
         // Decrypt sub-tlv.
         const nonce = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x00]), Buffer.from('PV-Msg03')]);
-        const decryptedData = sodium.api.crypto_aead_chacha20poly1305_ietf_decrypt(encryptedData, null, nonce, session.sessionKey);
+        const decryptedData = sodium.api.crypto_aead_chacha20poly1305_ietf_decrypt(encryptedData, null, nonce, sessionKey);
         if (!decryptedData) {
-            session.verifyState = VerifyState.INITIAL;
+            session.verifyContext = defaultSession.verifyContext;
 
             const responseTLV: tlv.TLVMap = new Map();
             responseTLV.set(TLVTypes.State, Buffer.from([VerifyState.M4]));
@@ -599,15 +639,25 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
             return;
         }
 
-        const iOSDevicePairingId = subTLV.get(TLVTypes.Identifier);
-        const iOSDeviceSignature = subTLV.get(TLVTypes.Signature);
-        const iOSDeviceLTPK = this.pairing.iOSDeviceLTPK;
-        const accessoryLTPK = this.pairing.accessoryLTPK;
-        const iOSDeviceInfo = Buffer.concat([iOSDeviceLTPK, iOSDevicePairingId, accessoryLTPK]); // TODO: FALSCH
+        const devicePairingId = subTLV.get(TLVTypes.Identifier);
+        const deviceSignature = subTLV.get(TLVTypes.Signature);
+        const deviceLongTimePublicKey = await this.storage.getControllerLongTimePublicKey(devicePairingId.toString());
+        if (!deviceLongTimePublicKey) {
+            const responseTLV: tlv.TLVMap = new Map();
+            responseTLV.set(TLVTypes.State, Buffer.from([VerifyState.M4]));
+            responseTLV.set(TLVTypes.Error, Buffer.from([ErrorCodes.Authentication]));
 
-        const verified = sodium.api.crypto_sign_ed25519_verify_detached(iOSDeviceSignature, iOSDeviceInfo, iOSDeviceLTPK);
+            response.writeHead(HTTPStatusCodes.BadRequest, { 'Content-Type': HAPContentTypes.TLV8 });
+            response.write(tlv.encode(responseTLV));
+            return;
+        }
+
+        const devicePublicKey = session.verifyContext.devicePublicKey;
+        const deviceInfo = Buffer.concat([deviceLongTimePublicKey, devicePairingId, devicePublicKey]);
+
+        const verified = sodium.api.crypto_sign_ed25519_verify_detached(deviceSignature, deviceInfo, deviceLongTimePublicKey);
         if (!verified) {
-            session.verifyState = VerifyState.INITIAL;
+            session.verifyContext = defaultSession.verifyContext;
 
             const responseTLV: tlv.TLVMap = new Map();
             responseTLV.set(TLVTypes.State, Buffer.from([PairState.M6]));
@@ -624,14 +674,14 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8 });
         response.write(tlv.encode(responseTLV));
 
-        session.verifyState = VerifyState.M4;
+        session.verifyContext.state = VerifyState.M4;
     }
 
-    private async handlePairings(session: HAPSession, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap): Promise<void> {
+    private async handlePairings(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap): Promise<void> {
 
     }
 
-    private async handleAttributeDatabase(session: HAPSession, request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
+    private async handleAttributeDatabase(session: Session, request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
 
     }
 }
