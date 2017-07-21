@@ -1,6 +1,6 @@
 import * as http from 'http';
-import { Address } from './Address';
-import { HTTPHandler } from './HTTPHandler';
+import { Address } from './address';
+import { HTTPHandler } from './http-handler';
 
 export class HttpServer {
 
@@ -50,7 +50,7 @@ export class HttpServer {
     }
 
     private handleRequest(request: http.IncomingMessage, response: http.ServerResponse) {
-        const chunks: Buffer[] = [];
+        let chunks: Buffer[] = [];
 
         request.on('data', (chunk: Buffer) => {
             chunks.push(chunk);
@@ -58,6 +58,7 @@ export class HttpServer {
 
         request.on('end', () => {
             const body = Buffer.concat(chunks);
+            chunks = [];
             this.handler.handleRequest(request, response, body)
                 .catch((err) => {
                     response.writeHead(500);

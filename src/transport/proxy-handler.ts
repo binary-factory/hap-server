@@ -1,4 +1,4 @@
-import { ProxyConnection } from './NetProxy';
+import { ProxyConnection } from './net-proxy';
 
 export interface ProxyHandler {
 

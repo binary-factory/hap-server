@@ -1,8 +1,8 @@
 import * as events from 'events';
 import * as net from 'net';
 import { Transform } from 'stream';
-import { Address } from './Address';
-import { ProxyHandler } from './ProxyHandler';
+import { Address } from './address';
+import { ProxyHandler } from './proxy-handler';
 
 export class ProxyConnection {
     rayId: number;
@@ -98,7 +98,7 @@ export class NetProxy extends events.EventEmitter {
 
         const outgoingTransform = new Transform({
             transform: (chunk: Buffer, encoding, callback: Function) => {
-                this.handler.transformIncomingData(connection, chunk, encoding)
+                this.handler.transformOutgoingData(connection, chunk, encoding)
                     .then((chunk) => {
                         callback(null, chunk);
                     })

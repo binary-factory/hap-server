@@ -1,5 +1,5 @@
 import * as http from 'http';
-import { HAPSession } from './HAPServer';
+import { HAPSession } from './hap-server';
 
 export interface HAPHandler {
 

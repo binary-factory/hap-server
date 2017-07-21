@@ -4,29 +4,37 @@ import * as url from 'url';
 import { hkdf } from '../crypto/hkdf/hkdf';
 import { SRPConfigurations } from '../crypto/srp/configurations';
 import { SecureRemotePassword } from '../crypto/srp/srp';
-import { Advertiser } from '../hap/advertiser';
-import { ErrorCodes } from '../hap/constants/pairing/error-codes';
-import { HTTPStatusCodes } from '../hap/constants/pairing/http-status-codes';
-import { TLVTypes } from '../hap/constants/pairing/tlv-types';
-import { HAPUrls } from '../hap/constants/pairing/urls';
-import { HTTPHandler } from './HTTPHandler';
-import { HttpServer } from './HTTPServer';
-import { NetProxy, ProxyConnection } from './NetProxy';
-import { ProxyHandler } from './ProxyHandler';
-import * as tlv from './tlv';
-import { TLVMap } from './tlv';
+import { Advertiser } from './advertiser';
+import { ErrorCodes } from './constants/error-codes';
+import { HTTPStatusCodes } from './constants/http-status-codes';
+import { TLVTypes } from './constants/tlv-types';
+import { HAPUrls } from './constants/urls';
+import { HTTPHandler } from '../transport/http-handler';
+import { HttpServer } from '../transport/http-server';
+import { NetProxy, ProxyConnection } from '../transport/net-proxy';
+import { ProxyHandler } from '../transport/proxy-handler';
+import * as tlv from '../transport/tlv';
+import { TLVMap } from '../transport/tlv';
+import { SimpleLogger } from '../util/simple-logger';
+import { PairState } from './constants/pair-state';
+import { PairMethods } from './constants/pair-methods';
+import { VerifyState } from './constants/verify-state';
 
 const sodium = require('sodium');
 
 export interface HAPSession {
-    pairState: number;
+    pairState: PairState;
+    verifyState: VerifyState;
+    authenticationAttempts: number;
     srp?: SecureRemotePassword;
     sessionKey?: Buffer;
     sharedSecret?: Buffer;
 }
 
 const defaultSession: HAPSession = {
-    pairState: 0
+    pairState: PairState.INITIAL,
+    verifyState: VerifyState.INITIAL,
+    authenticationAttempts: 0
 };
 
 interface Route {
@@ -42,8 +50,17 @@ enum HAPContentTypes {
     EMPTY = ''
 }
 
+interface HAPPairing {
+    accessoryPairingId: Buffer;
+    accessoryLTPK: Buffer;
+    accessoryLTSK: Buffer;
+    iOSDevicePairingId: Buffer;
+    iOSDeviceLTPK: Buffer;
+}
 
 export class HAPServer implements ProxyHandler, HTTPHandler {
+
+    private logger: SimpleLogger = new SimpleLogger('HAPServer');
 
     private proxyServer: NetProxy = new NetProxy(this);
 
@@ -52,6 +69,8 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
     private advertiser: Advertiser;
 
     private sessions: Map<number, HAPSession> = new Map();
+
+    private pairing: HAPPairing;
 
     public constructor(private deviceId: string,
                        private modelName: string,
@@ -70,13 +89,13 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
 
     async transformIncomingData(connection: ProxyConnection, chunk: Buffer, encoding: string): Promise<Buffer> {
         const session = this.sessions.get(connection.rayId);
-
+        console.log('incoming data');
         return chunk;
     }
 
     async transformOutgoingData(connection: ProxyConnection, chunk: Buffer, encoding: string): Promise<Buffer> {
         const session = this.sessions.get(connection.rayId);
-
+        console.log('outgoing data');
         return chunk;
     }
 
@@ -151,6 +170,9 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
             }
         ];
         console.log(requestPathname);
+        console.log(requestMethod);
+        console.log(requestContentType);
+
         // Math pathname.
         let matching: Route[] = routes.filter((route) => route.pathname === requestPathname);
         if (matching) {
@@ -177,30 +199,28 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
                                 parsedBody = JSON.parse(body.toString());
                             }
                         } catch (err) {
-                            // HTTP: Bad Request.
-                            response.writeHead(400);
+                            response.writeHead(HTTPStatusCodes.BadRequest);
                         }
-
-                        // Call handler.
-                        await matchingRoute.handler(session, request, response, parsedBody);
-
-
-                    } else {
-                        // HTTP: Unsupported Media Type.
-                        response.writeHead(415);
                     }
-                } else {
-                    // HTTP: Method Not Allowed.
-                    response.writeHead(405);
-                }
-            } else {
-                // HTTP: Not Found.
-                response.writeHead(404);
-            }
 
-            response.end();
+                    // Call handler.
+                    await matchingRoute.handler(session, request, response, parsedBody);
+
+                } else {
+                    // HTTP: Unsupported Media Type.
+                    response.writeHead(415);
+                }
+
+            } else {
+                response.writeHead(HTTPStatusCodes.MethodNotAllowed);
+            }
+        } else {
+            response.writeHead(404);
         }
+
+        response.end();
     }
+
 
     async listen() {
 
@@ -212,10 +232,12 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
     }
 
     private handleProxyConnect(connection: ProxyConnection) {
+        console.log('proxy connected', connection.rayId);
         this.sessions.set(connection.rayId, defaultSession);
     }
 
     private handleProxyClose(rayId: number) {
+        console.log('proxy closed', rayId);
         this.sessions.delete(rayId);
     }
 
@@ -237,61 +259,67 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
                 return false;
             }
         }
-
         return true;
     }
 
     private async handlePairSetup(session: HAPSession, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap): Promise<void> {
+        console.log('handlePairSetup');
         const tlvTypes = [TLVTypes.State];
         if (!this.assignTLVContains(body, tlvTypes)) {
-            response.writeHead(400);
+            response.writeHead(HTTPStatusCodes.BadRequest);
             return;
         }
 
-        const state = body.get(TLVTypes.State).readUInt8(0);
+        const state: PairState = body.get(TLVTypes.State).readUInt8(0);
+        console.log('state', state);
         if (state !== (session.pairState + 1)) {
-            session.pairState = 0;
-            response.writeHead(400);
+            console.log('state missmatch', session.pairState);
+            session.pairState = PairState.INITIAL;
+            response.writeHead(HTTPStatusCodes.BadRequest);
             return;
         }
 
         switch (state) {
-            case 1:
+            case PairState.M1:
                 await this.handlePairSetupStepOne(session, request, response, body);
                 break;
 
-            case 3:
+            case PairState.M3:
                 await this.handlePairSetupStepThree(session, request, response, body);
                 break;
 
-            case 5:
+            case PairState.M5:
                 await this.handlePairSetupStepFive(session, request, response, body);
                 break;
         }
-
     }
 
     private async handlePairSetupStepOne(session: HAPSession, request: http.IncomingMessage, response: http.ServerResponse, body: TLVMap) {
         const tlvTypes = [TLVTypes.Method];
         if (!this.assignTLVContains(body, tlvTypes)) {
-            response.writeHead(400);
-            return;
-        }
-
-        const method = body.get(TLVTypes.Method).readUInt8(0);
-        if (method !== 0) {
             response.writeHead(HTTPStatusCodes.BadRequest);
             return;
         }
 
-        const username = 'Pair-Setup';
-        const password = '123-99-123';
+        const method = body.get(TLVTypes.Method).readUInt8(0);
+        if (method !== PairMethods.PairSetup) {
+            //response.writeHead(HTTPStatusCodes.BadRequest);
+            // return;
+        }
+
+        // Check authentication attempts.
+        if (session.authenticationAttempts > 100) { // TODO: Use constant.
+            // TODO: Implement.
+        }
+
+        const username = 'Pair-Setup'; // TODO: As property.
+        const password = '123-99-123'; // TODO: As property.
         const serverPrivateKey = crypto.randomBytes(16);
         const salt = crypto.randomBytes(16);
         session.srp = new SecureRemotePassword(username, password, salt, SRPConfigurations[3072], serverPrivateKey);
 
 
-        const state = Buffer.from([0x02]);
+        const state = Buffer.from([PairState.M2]);
         const publicKey = session.srp.getServerPublicKey();
 
         const responseTLV: tlv.TLVMap = new Map();
@@ -299,17 +327,16 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         responseTLV.set(TLVTypes.PublicKey, publicKey);
         responseTLV.set(TLVTypes.Salt, salt);
 
-        response.writeHead(200, { 'Content-Type': 'application/pairing+tlv8' });
+        response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8 });
         response.write(tlv.encode(responseTLV));
-        response.end();
 
-        session.pairState = 2;
+        session.pairState = PairState.M2;
     }
 
     private async handlePairSetupStepThree(session: HAPSession, request: http.IncomingMessage, response: http.ServerResponse, body: TLVMap) {
         const tlvTypes = [TLVTypes.PublicKey, TLVTypes.Proof];
         if (!this.assignTLVContains(body, tlvTypes)) {
-            response.writeHead(400);
+            response.writeHead(HTTPStatusCodes.BadRequest);
             return;
         }
 
@@ -322,13 +349,13 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         const sharedSecret = session.srp.getSessionKey();
         const verified = srp.verifyProof(clientProof);
         if (!verified) {
-            session.pairState = 1;
+            session.pairState = PairState.INITIAL;
 
             const responseTLV: tlv.TLVMap = new Map();
-            responseTLV.set(TLVTypes.State, Buffer.from([0x04]));
+            responseTLV.set(TLVTypes.State, Buffer.from([PairState.M4]));
             responseTLV.set(TLVTypes.Error, Buffer.from([ErrorCodes.Authentication]));
 
-            response.writeHead(200, { 'Content-Type': 'application/pairing+tlv8' });
+            response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8 });
             response.write(tlv.encode(responseTLV));
             return;
         }
@@ -344,23 +371,23 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         responseTLV.set(TLVTypes.State, Buffer.from([0x04]));
         responseTLV.set(TLVTypes.Proof, serverProof);
 
-        response.writeHead(200, { 'Content-Type': 'application/pairing+tlv8' });
+        response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8 });
         response.write(tlv.encode(responseTLV));
 
-        session.pairState = 4;
+        session.pairState = PairState.M4;
     }
 
     private async handlePairSetupStepFive(session: HAPSession, request: http.IncomingMessage, response: http.ServerResponse, body: TLVMap) {
         const tlvTypes = [TLVTypes.EncryptedData];
         if (!this.assignTLVContains(body, tlvTypes)) {
-            response.writeHead(400);
+            response.writeHead(HTTPStatusCodes.BadRequest);
             return;
         }
 
         // Check for any errors.
         const clientError = body.get(TLVTypes.Error);
         if (clientError) {
-            session.pairState = 1;
+            session.pairState = PairState.INITIAL;
             return;
         }
 
@@ -370,13 +397,13 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         const nonceM5 = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x00]), Buffer.from('PS-Msg05')]);
         const decryptedData = sodium.api.crypto_aead_chacha20poly1305_ietf_decrypt(encryptedData, null, nonceM5, session.sessionKey);
         if (!decryptedData) {
-            session.pairState = 1;
+            session.pairState = PairState.INITIAL;
 
             const responseTLV: tlv.TLVMap = new Map();
-            responseTLV.set(TLVTypes.State, Buffer.from([0x05]));
+            responseTLV.set(TLVTypes.State, Buffer.from([PairState.M5]));
             responseTLV.set(TLVTypes.Error, Buffer.from([ErrorCodes.Authentication]));
 
-            response.writeHead(200, { 'Content-Type': 'application/pairing+tlv8' });
+            response.writeHead(HTTPStatusCodes.BadRequest, { 'Content-Type': HAPContentTypes.TLV8 });
             response.write(tlv.encode(responseTLV));
             return;
         }
@@ -396,13 +423,13 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         const iOSDeviceInfo = Buffer.concat([iOSDeviceX, iOSDevicePairingId, iOSDeviceLTPK]);
         const verified = sodium.api.crypto_sign_ed25519_verify_detached(iOSDeviceSignature, iOSDeviceInfo, iOSDeviceLTPK);
         if (!verified) {
-            session.pairState = 1;
+            session.pairState = PairState.INITIAL;
 
             const responseTLV: tlv.TLVMap = new Map();
-            responseTLV.set(TLVTypes.State, Buffer.from([0x06]));
+            responseTLV.set(TLVTypes.State, Buffer.from([PairState.M6]));
             responseTLV.set(TLVTypes.Error, Buffer.from([ErrorCodes.Authentication]));
 
-            response.writeHead(200, { 'Content-Type': HAPContentTypes.TLV8 });
+            response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8 });
             response.write(tlv.encode(responseTLV));
             return;
         }
@@ -441,17 +468,163 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         }
 
         const responseTLV: tlv.TLVMap = new Map();
-        responseTLV.set(TLVTypes.State, Buffer.from([0x06]));
+        responseTLV.set(TLVTypes.State, Buffer.from([PairState.M6]));
         responseTLV.set(TLVTypes.EncryptedData, encryptedSubTLV);
 
-        response.writeHead(200, { 'Content-Type': HAPContentTypes.TLV8 });
+        response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8 });
         response.write(tlv.encode(responseTLV));
 
-        session.pairState = 6;
+        session.pairState = PairState.M6;
+
+        // Save pairing.
+        const pairing: HAPPairing = {
+            accessoryPairingId,
+            accessoryLTPK,
+            accessoryLTSK,
+            iOSDevicePairingId,
+            iOSDeviceLTPK,
+        };
+
+        // TODO: Really save!
+        this.pairing = pairing;
     }
 
     private async handlePairVerify(session: HAPSession, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap): Promise<void> {
+        const tlvTypes = [TLVTypes.State];
+        if (!this.assignTLVContains(body, tlvTypes)) {
+            response.writeHead(HTTPStatusCodes.BadRequest);
+            return;
+        }
 
+        const state: VerifyState = body.get(TLVTypes.State).readUInt8(0);
+        console.log('verify step', state);
+        if (state !== (session.verifyState + 1)) {
+            session.verifyState = VerifyState.INITIAL;
+            response.writeHead(HTTPStatusCodes.BadRequest);
+            return;
+        }
+
+        switch (state) {
+            case VerifyState.M1:
+                await this.handlePairVerifyStepOne(session, request, response, body);
+                break;
+
+            case VerifyState.M3:
+                await this.handlePairVerifyStepThree(session, request, response, body);
+                break;
+        }
+    }
+
+    private async handlePairVerifyStepOne(session: HAPSession, request: http.IncomingMessage, response: http.ServerResponse, body: TLVMap) {
+        const tlvTypes = [TLVTypes.PublicKey];
+        if (!this.assignTLVContains(body, tlvTypes)) {
+            response.writeHead(HTTPStatusCodes.BadRequest);
+            return;
+        }
+
+        const clientPublicKey = body.get(TLVTypes.PublicKey);
+
+        const keyPair = sodium.api.crypto_sign_ed25519_keypair();
+        if (!keyPair) {
+            throw new Error('could not generate key pairs.');
+        }
+        const accessoryPK = sodium.api.crypto_sign_ed25519_pk_to_curve25519(keyPair.publicKey);
+        const accessorySK = sodium.api.crypto_sign_ed25519_sk_to_curve25519(keyPair.secretKey);
+        session.sharedSecret = sodium.api.crypto_scalarmult_curve25519(accessorySK, clientPublicKey);
+
+        const accessoryPairingId = this.pairing.accessoryPairingId;
+        const accessoryInfo = Buffer.concat([accessoryPK, accessoryPairingId, clientPublicKey]);
+        const accessoryLTSK = this.pairing.accessoryLTSK;
+        const accessorySignature = sodium.api.crypto_sign_ed25519_detached(accessoryInfo, accessoryLTSK);
+        if (!accessorySignature) {
+            throw new Error('could not sign accessoryInfo.');
+        }
+
+        // Derive shared key from the Curve25519 shared secret.
+        const salt = Buffer.from('Pair-Verify-Encrypt-Salt');
+        const info = Buffer.from('Pair-Verify-Encrypt-Info');
+        session.sessionKey = hkdf('sha512', session.sharedSecret, salt, info, 32);
+
+        const subTLV = new Map();
+        subTLV.set(TLVTypes.Identifier, accessoryPairingId);
+        subTLV.set(TLVTypes.Signature, accessorySignature);
+        const subTLVData = tlv.encode(subTLV);
+
+        const nonce = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x00]), Buffer.from('PV-Msg02')]);
+        const encryptedSubTLV = sodium.api.crypto_aead_chacha20poly1305_ietf_encrypt(subTLVData, null, nonce, session.sessionKey);
+        if (!encryptedSubTLV) {
+            throw new Error('could not encrypt sub-tlv.');
+        }
+
+        const responseTLV: tlv.TLVMap = new Map();
+        responseTLV.set(TLVTypes.State, Buffer.from([VerifyState.M2]));
+        responseTLV.set(TLVTypes.PublicKey, accessoryPK);
+        responseTLV.set(TLVTypes.EncryptedData, encryptedSubTLV);
+
+        response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8 });
+        response.write(tlv.encode(responseTLV));
+
+        session.verifyState = VerifyState.M2;
+    }
+
+    private async handlePairVerifyStepThree(session: HAPSession, request: http.IncomingMessage, response: http.ServerResponse, body: TLVMap) {
+        const tlvTypes = [TLVTypes.EncryptedData];
+        if (!this.assignTLVContains(body, tlvTypes)) {
+            response.writeHead(HTTPStatusCodes.BadRequest);
+            return;
+        }
+
+        const encryptedData = body.get(TLVTypes.EncryptedData);
+
+        // Decrypt sub-tlv.
+        const nonce = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x00]), Buffer.from('PV-Msg03')]);
+        const decryptedData = sodium.api.crypto_aead_chacha20poly1305_ietf_decrypt(encryptedData, null, nonce, session.sessionKey);
+        if (!decryptedData) {
+            session.verifyState = VerifyState.INITIAL;
+
+            const responseTLV: tlv.TLVMap = new Map();
+            responseTLV.set(TLVTypes.State, Buffer.from([VerifyState.M4]));
+            responseTLV.set(TLVTypes.Error, Buffer.from([ErrorCodes.Authentication]));
+
+            response.writeHead(HTTPStatusCodes.BadRequest, { 'Content-Type': HAPContentTypes.TLV8 });
+            response.write(tlv.encode(responseTLV));
+            return;
+        }
+
+        // Decode sub-tlv.
+        const subTLV = tlv.decode(decryptedData);
+        const subTLVTypes = [TLVTypes.Identifier, TLVTypes.Signature];
+        if (!this.assignTLVContains(subTLV, subTLVTypes)) {
+            response.writeHead(HTTPStatusCodes.BadRequest);
+            return;
+        }
+
+        const iOSDevicePairingId = subTLV.get(TLVTypes.Identifier);
+        const iOSDeviceSignature = subTLV.get(TLVTypes.Signature);
+        const iOSDeviceLTPK = this.pairing.iOSDeviceLTPK;
+        const accessoryLTPK = this.pairing.accessoryLTPK;
+        const iOSDeviceInfo = Buffer.concat([iOSDeviceLTPK, iOSDevicePairingId, accessoryLTPK]); // TODO: FALSCH
+
+        const verified = sodium.api.crypto_sign_ed25519_verify_detached(iOSDeviceSignature, iOSDeviceInfo, iOSDeviceLTPK);
+        if (!verified) {
+            session.verifyState = VerifyState.INITIAL;
+
+            const responseTLV: tlv.TLVMap = new Map();
+            responseTLV.set(TLVTypes.State, Buffer.from([PairState.M6]));
+            responseTLV.set(TLVTypes.Error, Buffer.from([ErrorCodes.Authentication]));
+
+            response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8 });
+            response.write(tlv.encode(responseTLV));
+            return;
+        }
+
+        const responseTLV: tlv.TLVMap = new Map();
+        responseTLV.set(TLVTypes.State, Buffer.from([VerifyState.M4]));
+
+        response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8 });
+        response.write(tlv.encode(responseTLV));
+
+        session.verifyState = VerifyState.M4;
     }
 
     private async handlePairings(session: HAPSession, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap): Promise<void> {
