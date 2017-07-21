@@ -61,6 +61,7 @@ export class HttpServer {
             chunks = [];
             this.handler.handleRequest(request, response, body)
                 .catch((err) => {
+                    console.log('500', err);
                     response.writeHead(500);
                     response.end();
                 });
