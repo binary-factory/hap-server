@@ -21,6 +21,7 @@ import { PairState } from './constants/pair-state';
 import { TLVTypes } from './constants/tlv-types';
 import { HAPUrls } from './constants/urls';
 import { VerifyState } from './constants/verify-state';
+import { Frame, FrameParser } from './frame-parser';
 
 const sodium = require('sodium');
 
@@ -50,20 +51,37 @@ interface PairVerifyContext {
     sessionKey?: Buffer;
 }
 
+interface CryptoContext {
+    active: boolean;
+    counter: number;
+    sessionKey?: Buffer;
+}
+
 export interface Session {
+    authenticationAttempts: number;
     pairContext: PairSetupContext;
     verifyContext: PairVerifyContext;
-    authenticationAttempts: number;
+    encryptContext: CryptoContext;
+    decryptContext: CryptoContext;
+    parser?: FrameParser;
 }
 
 const defaultSession: Session = {
+    authenticationAttempts: 0,
     pairContext: {
         state: PairState.INITIAL
     },
     verifyContext: {
         state: VerifyState.INITIAL
     },
-    authenticationAttempts: 0
+    encryptContext: {
+        active: false,
+        counter: 0
+    },
+    decryptContext: {
+        active: false,
+        counter: 0
+    }
 };
 
 interface Route {
@@ -112,8 +130,10 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
 
     async transformIncomingData(connection: ProxyConnection, chunk: Buffer, encoding: string): Promise<Buffer> {
         const session = this.sessions.get(connection.rayId);
-        if (session.verifyContext.state === VerifyState.M4) {
-            // TODO: Decrypt!
+        if (session.decryptContext.active) {
+            session.encryptContext.active = true;
+            session.parser.update(chunk);
+            console.dir(chunk);
         } else {
             return chunk;
         }
@@ -122,8 +142,9 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
 
     async transformOutgoingData(connection: ProxyConnection, chunk: Buffer, encoding: string): Promise<Buffer> {
         const session = this.sessions.get(connection.rayId);
-        if (session.verifyContext.state === VerifyState.M4) {
+        if (session.encryptContext.active) {
             // TODO: Encrypt!
+            console.log('encrypted');
         } else {
             return chunk;
         }
@@ -327,7 +348,7 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
 
         const state: PairState = body.get(TLVTypes.State).readUInt8(0);
         if (state !== (session.pairContext.state + 1)) {
-            session.pairContext = defaultSession.pairContext;
+            session.pairContext = defaultSession.pairContext; // TODO: Object.assign({}, defaultSession.pairContext)
             response.writeHead(HTTPStatusCodes.BadRequest);
             return;
         }
@@ -618,8 +639,6 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
     }
 
     private async handlePairVerifyStepThree(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: TLVMap) {
-        const sessionKey = session.verifyContext.sessionKey;
-
         const tlvTypes = [TLVTypes.EncryptedData];
         if (!this.assignTLVContains(body, tlvTypes)) {
             response.writeHead(HTTPStatusCodes.BadRequest);
@@ -629,6 +648,7 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         const encryptedData = body.get(TLVTypes.EncryptedData);
 
         // Decrypt sub-tlv.
+        const sessionKey = session.verifyContext.sessionKey;
         const nonce = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x00]), Buffer.from('PV-Msg03')]);
         const decryptedData = sodium.api.crypto_aead_chacha20poly1305_ietf_decrypt(encryptedData, null, nonce, sessionKey);
         if (!decryptedData) {
@@ -689,7 +709,32 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8 });
         response.write(tlv.encode(responseTLV));
 
+
+        const sharedSecret = session.verifyContext.sharedSecret;
+        const encSalt = Buffer.from('Control-Salt');
+        const infoRead = Buffer.from('Control-Read-Encryption-Key');
+        const infoWrite = Buffer.from('Control-Write-Encryption-Key');
+        const accessoryToControllerKey = hkdf('sha512', sharedSecret, encSalt, infoRead, 32);
+        const controllerToAccessoryKey = hkdf('sha512', sharedSecret, encSalt, infoWrite, 32);
+
         session.verifyContext.state = VerifyState.M4;
+        session.encryptContext.sessionKey = accessoryToControllerKey;
+        session.decryptContext.sessionKey = controllerToAccessoryKey;
+        session.decryptContext.active = true;
+
+
+        session.parser = new FrameParser(2, 16);
+        session.parser.on('encryptedData', (message: Frame) => {
+            const nonce = Buffer.alloc(12);
+            const fullMessage = Buffer.concat([message.encryptedData, message.authTag]);
+            const decryptedData = sodium.api.crypto_aead_chacha20poly1305_ietf_decrypt(fullMessage, message.additionalAuthenticatedData, nonce, controllerToAccessoryKey);
+            if (decryptedData) {
+                console.log(decryptedData);
+                console.log(decryptedData.toString());
+            }
+
+        });
+
     }
 
     private async handlePairings(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap): Promise<void> {
