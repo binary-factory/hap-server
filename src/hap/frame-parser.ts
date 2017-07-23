@@ -1,6 +1,3 @@
-import * as events from 'events';
-
-
 export interface Frame {
     additionalAuthenticatedData: Buffer;
     encryptedData: Buffer;
@@ -13,7 +10,7 @@ enum ReadState {
     AuthTag
 }
 
-export class FrameParser extends events.EventEmitter {
+export class FrameParser {
 
     private readState = ReadState.Length;
 
@@ -29,7 +26,7 @@ export class FrameParser extends events.EventEmitter {
 
     constructor(private lengthBytes: number,
                 private authenticationCodeBytes: number) {
-        super();
+
     }
 
     update(chunk: Buffer): Frame[] {

@@ -1,5 +1,6 @@
 import * as crypto from 'crypto';
 import * as http from 'http';
+import { Transform } from 'stream';
 import * as url from 'url';
 import { hkdf } from '../crypto/hkdf/hkdf';
 import { SRPConfigurations } from '../crypto/srp/configurations';
@@ -9,7 +10,6 @@ import { Storage } from '../services/storage';
 import { HTTPHandler } from '../transport/http-handler';
 import { HttpServer } from '../transport/http-server';
 import { NetProxy, ProxyConnection } from '../transport/net-proxy';
-import { ProxyHandler } from '../transport/proxy-handler';
 import * as tlv from '../transport/tlv';
 import { TLVMap } from '../transport/tlv';
 import { Advertiser } from './advertiser';
@@ -21,7 +21,8 @@ import { PairState } from './constants/pair-state';
 import { TLVTypes } from './constants/tlv-types';
 import { HAPUrls } from './constants/urls';
 import { VerifyState } from './constants/verify-state';
-import { FrameParser } from './frame-parser';
+import { SecureDecryptStream } from './secure-decrypt-stream';
+import { SecureEncryptStream } from './secure-encrypt-stream';
 
 const sodium = require('sodium');
 
@@ -51,19 +52,12 @@ interface PairVerifyContext {
     sessionKey?: Buffer;
 }
 
-interface CryptoContext {
-    active: boolean;
-    counter: number;
-    sessionKey?: Buffer;
-}
-
 export interface Session {
     authenticationAttempts: number;
     pairContext: PairSetupContext;
     verifyContext: PairVerifyContext;
-    encryptContext: CryptoContext;
-    decryptContext: CryptoContext;
-    frameParser?: FrameParser;
+    decryptStream?: SecureDecryptStream;
+    encryptStream?: SecureEncryptStream;
 }
 
 const defaultSession: Session = {
@@ -73,14 +67,6 @@ const defaultSession: Session = {
     },
     verifyContext: {
         state: VerifyState.INITIAL
-    },
-    encryptContext: {
-        active: false,
-        counter: 0
-    },
-    decryptContext: {
-        active: false,
-        counter: 0
     }
 };
 
@@ -97,13 +83,17 @@ enum HAPContentTypes {
     EMPTY = ''
 }
 
-export class HAPServer implements ProxyHandler, HTTPHandler {
+export class HAPServer implements HTTPHandler {
 
     //private logger: SimpleLogger = new SimpleLogger('HAPServer');
 
     private storage: Storage = new MemoryStorage();
 
-    private proxyServer: NetProxy = new NetProxy(this);
+    private proxyServer: NetProxy = new NetProxy((connection) => {
+        return this.createDecryptStream(connection);
+    }, (connection) => {
+        return this.createEncryptStream(connection);
+    });
 
     private httpServer: HttpServer = new HttpServer(this);
 
@@ -126,46 +116,6 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         });
 
         this.advertiser = new Advertiser(deviceId, modelName, categoryIdentifier, 1);
-    }
-
-    async transformIncomingData(connection: ProxyConnection, chunk: Buffer, encoding: string): Promise<Buffer> {
-        const session = this.sessions.get(connection.rayId);
-        if (session.decryptContext.active) {
-            // Also activate encryption of outgoing data.
-            session.encryptContext.active = true;
-
-            // Parse frames.
-            const frames = session.frameParser.update(chunk);
-            if (frames.length > 0) {
-                // Decrypt each frame separately.
-                const decrypted: Buffer[] = [];
-                for (let i = 0; i < frames.length; i++) {
-                    const frame = frames[i];
-                    const nonce = Buffer.alloc(12);
-                    const decryptedData = sodium.api.crypto_aead_chacha20poly1305_ietf_decrypt_detached(frame.encryptedData, frame.authTag, frame.additionalAuthenticatedData, nonce, session.decryptContext.sessionKey);
-                    if (!decryptedData) {
-                        throw new Error('could not decrypt incoming data.');
-                    }
-                    decrypted.push(decryptedData);
-                }
-                return Buffer.concat(decrypted);
-            }
-        } else {
-            return chunk;
-        }
-
-    }
-
-    async transformOutgoingData(connection: ProxyConnection, chunk: Buffer, encoding: string): Promise<Buffer> {
-        const session = this.sessions.get(connection.rayId);
-        if (session.encryptContext.active) {
-            // TODO: Encrypt!
-            console.log('encrypted');
-        } else {
-
-            return chunk;
-        }
-
     }
 
     async handleRequest(request: http.IncomingMessage, response: http.ServerResponse, body: Buffer): Promise<void> {
@@ -237,6 +187,7 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
                 })
             }
         ];
+
         console.log(requestPathname);
         console.log(requestMethod);
         console.log(requestContentType);
@@ -286,7 +237,24 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
             response.writeHead(404);
         }
 
+
         response.end();
+    }
+
+    private createDecryptStream(connection: ProxyConnection): Transform {
+        const session = this.sessions.get(connection.rayId);
+        const decryptStream = new SecureDecryptStream();
+        session.decryptStream = decryptStream;
+
+        return decryptStream;
+    }
+
+    private createEncryptStream(connection: ProxyConnection): Transform {
+        const session = this.sessions.get(connection.rayId);
+        const encryptStream = new SecureEncryptStream();
+        session.encryptStream = encryptStream;
+
+        return encryptStream;
     }
 
     async start() {
@@ -356,7 +324,6 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
     }
 
     private async handlePairSetup(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap): Promise<void> {
-        console.log('handlePairSetup');
         const tlvTypes = [TLVTypes.State];
         if (!this.assignTLVContains(body, tlvTypes)) {
             response.writeHead(HTTPStatusCodes.BadRequest);
@@ -735,13 +702,12 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         const controllerToAccessoryKey = hkdf('sha512', sharedSecret, encSalt, infoWrite, 32);
 
         session.verifyContext.state = VerifyState.M4;
-        session.encryptContext.sessionKey = accessoryToControllerKey;
-        session.decryptContext.sessionKey = controllerToAccessoryKey;
-        session.decryptContext.active = true;
-
-
-        session.frameParser = new FrameParser(2, 16);
-
+        session.decryptStream.setKey(controllerToAccessoryKey);
+        session.decryptStream.enable();
+        session.encryptStream.setKey(accessoryToControllerKey);
+        session.decryptStream.once('data', () => {
+            session.encryptStream.enable();
+        });
     }
 
     private async handlePairings(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap): Promise<void> {
@@ -749,6 +715,206 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
     }
 
     private async handleAttributeDatabase(session: Session, request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
+        const db = {
+            'accessories': [
+                {
+                    'aid': 1,
+                    'services': [
+                        {
+                            'type': '3E',
+                            'iid': 1,
+                            'characteristics': [
+                                {
+                                    'type': '23',
+                                    'value': 'Acme Light Bridge',
+                                    'perms': ['pr'],
+                                    'format': 'string',
+                                    'iid': 2
+                                },
+                                {
+                                    'type': '20',
+                                    'value': 'Acme',
+                                    'perms': ['pr'],
 
+                                    'format': 'string',
+                                    'iid': 3
+                                },
+                                {
+                                    'type': '30',
+                                    'value': '037A2BABF19D',
+                                    'perms': ['pr'],
+                                    'format': 'string',
+                                    'iid': 4
+                                },
+                                {
+                                    'type': '21',
+                                    'value': 'Bridge1,1',
+                                    'perms': ['pr'],
+                                    'format': 'string',
+                                    'iid': 5
+                                },
+                                {
+                                    'type': '14',
+                                    'value': null,
+                                    'perms': ['pw'],
+                                    'format': 'bool',
+                                    'iid': 6
+                                }
+                            ]
+                        }
+                    ]
+                },
+
+                {
+                    'aid': 2,
+                    'services': [
+                        {
+                            'type': '3E',
+                            'iid': 1,
+
+                            'characteristics': [
+                                {
+                                    'type': '23',
+                                    'value': 'Acme LED Light Bulb',
+                                    'perms': ['pr'],
+                                    'format': 'string',
+                                    'iid': 2
+                                },
+                                {
+                                    'type': '20',
+                                    'value': 'Acme',
+                                    'perms': ['pr'],
+                                    'format': 'string',
+                                    'iid': 3
+                                },
+                                {
+                                    'type': '30',
+                                    'value': '099DB48E9E28',
+                                    'perms': ['pr'],
+                                    'format': 'string',
+                                    'iid': 4
+                                },
+                                {
+                                    'type': '21',
+                                    'value': 'LEDBulb1,1',
+                                    'perms': ['pr'],
+                                    'format': 'string',
+                                    'iid': 5
+                                },
+                                {
+                                    'type': '14',
+                                    'value': null,
+                                    'perms': ['pw'],
+                                    'format': 'bool',
+                                    'iid': 6
+
+                                }
+                            ]
+                        },
+                        {
+                            'type': '43',
+                            'iid': 7,
+                            'characteristics': [
+                                {
+                                    'type': '25',
+                                    'value': true,
+                                    'perms': ['pr', 'pw'],
+                                    'format': 'bool',
+                                    'iid': 8
+                                },
+                                {
+                                    'type': '8',
+                                    'value': 50,
+                                    'perms': ['pr', 'pw'],
+                                    'iid': 9,
+                                    'maxValue': 100,
+                                    'minStep': 1,
+                                    'minValue': 20,
+                                    'format': 'int',
+                                    'unit': 'percentage'
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    'aid': 3,
+                    'services': [
+                        {
+                            'type': '3E',
+
+                            'iid': 1,
+                            'characteristics': [
+                                {
+                                    'type': '23',
+                                    'value': 'Acme LED Light Bulb',
+                                    'perms': ['pr'],
+                                    'format': 'string',
+                                    'iid': 2
+                                },
+                                {
+                                    'type': '20',
+                                    'value': 'Acme',
+                                    'perms': ['pr'],
+                                    'format': 'string',
+                                    'iid': 3
+                                },
+                                {
+                                    'type': '30',
+                                    'value': '099DB48E9E28',
+                                    'perms': ['pr'],
+                                    'format': 'string',
+                                    'iid': 4
+                                },
+                                {
+                                    'type': '21',
+                                    'value': 'LEDBulb1,1',
+                                    'perms': ['pr'],
+                                    'format': 'string',
+                                    'iid': 5
+                                },
+                                {
+                                    'type': '14',
+                                    'value': null,
+                                    'perms': ['pw'],
+                                    'format': 'bool',
+
+                                    'iid': 6
+                                }
+                            ]
+                        },
+                        {
+                            'type': '43',
+                            'iid': 7,
+                            'characteristics': [
+                                {
+                                    'type': '25',
+                                    'value': true,
+                                    'perms': ['pr', 'pw'],
+                                    'format': 'bool',
+                                    'iid': 8
+                                },
+                                {
+                                    'type': '8',
+                                    'value': 50,
+                                    'perms': ['pr', 'pw'],
+                                    'iid': 9,
+                                    'maxValue': 100,
+                                    'minStep': 1,
+                                    'minValue': 20,
+                                    'format': 'int',
+                                    'unit': 'percentage'
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        };
+
+        const out = JSON.stringify(db);
+        response.writeHead(200, { 'Content-Type': HAPContentTypes.JSON });
+
+        response.write(out);
     }
 }

@@ -1,8 +1,7 @@
 import { HAPServer } from './hap/hap-server';
 
-let test = Buffer.alloc(0);
-console.log(test.slice(0));
-const accessory = new HAPServer('C7:D6:56:E8:C7:A9', 'test12', 1);
+
+const accessory = new HAPServer('A2:D9:99:E9:C2:A9', 'bbbbbb', 1);
 accessory.start()
     .then(() => {
         console.log('up!');

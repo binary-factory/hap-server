@@ -2,13 +2,14 @@ import * as events from 'events';
 import * as net from 'net';
 import { Transform } from 'stream';
 import { Address } from './address';
-import { ProxyHandler } from './proxy-handler';
 
 export class ProxyConnection {
     rayId: number;
     localSocket: net.Socket;
     remoteSocket: net.Socket;
 }
+
+export type ProxyTransformFactory = (connection: ProxyConnection) => Transform;
 
 export class NetProxy extends events.EventEmitter {
 
@@ -22,7 +23,8 @@ export class NetProxy extends events.EventEmitter {
 
     private connections: ProxyConnection[] = [];
 
-    constructor(private handler: ProxyHandler) {
+    constructor(private incomingTransformFactory: ProxyTransformFactory,
+                private outgoingTransformFactory: ProxyTransformFactory) {
 
         super();
 
@@ -63,9 +65,6 @@ export class NetProxy extends events.EventEmitter {
         });
     }
 
-    getHandler(): ProxyHandler {
-        return this.handler;
-    }
 
     getNativeServer(): net.Server {
         return this.nativeServer;
@@ -83,30 +82,10 @@ export class NetProxy extends events.EventEmitter {
             localSocket,
             remoteSocket
         };
+        this.emit('connect', connection);
 
-        const incomingTransform = new Transform({
-            transform: (chunk: Buffer, encoding, callback: Function) => {
-                this.handler.transformIncomingData(connection, chunk, encoding)
-                    .then((chunk) => {
-                        callback(null, chunk);
-                    })
-                    .catch((err) => {
-                        callback(err);
-                    });
-            }
-        });
-
-        const outgoingTransform = new Transform({
-            transform: (chunk: Buffer, encoding, callback: Function) => {
-                this.handler.transformOutgoingData(connection, chunk, encoding)
-                    .then((chunk) => {
-                        callback(null, chunk);
-                    })
-                    .catch((err) => {
-                        callback(err);
-                    });
-            }
-        });
+        const incomingTransform = this.incomingTransformFactory(connection);
+        const outgoingTransform = this.outgoingTransformFactory(connection);
 
         localSocket
             .pipe(incomingTransform)
@@ -144,7 +123,6 @@ export class NetProxy extends events.EventEmitter {
         });
 
         this.connections.push(connection);
-        this.emit('connect', connection);
     }
 
     private removeConnection(connection: ProxyConnection) {
