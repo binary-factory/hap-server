@@ -21,7 +21,7 @@ import { PairState } from './constants/pair-state';
 import { TLVTypes } from './constants/tlv-types';
 import { HAPUrls } from './constants/urls';
 import { VerifyState } from './constants/verify-state';
-import { Frame, FrameParser } from './frame-parser';
+import { FrameParser } from './frame-parser';
 
 const sodium = require('sodium');
 
@@ -63,7 +63,7 @@ export interface Session {
     verifyContext: PairVerifyContext;
     encryptContext: CryptoContext;
     decryptContext: CryptoContext;
-    parser?: FrameParser;
+    frameParser?: FrameParser;
 }
 
 const defaultSession: Session = {
@@ -131,9 +131,25 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
     async transformIncomingData(connection: ProxyConnection, chunk: Buffer, encoding: string): Promise<Buffer> {
         const session = this.sessions.get(connection.rayId);
         if (session.decryptContext.active) {
+            // Also activate encryption of outgoing data.
             session.encryptContext.active = true;
-            session.parser.update(chunk);
-            console.dir(chunk);
+
+            // Parse frames.
+            const frames = session.frameParser.update(chunk);
+            if (frames.length > 0) {
+                // Decrypt each frame separately.
+                const decrypted: Buffer[] = [];
+                for (let i = 0; i < frames.length; i++) {
+                    const frame = frames[i];
+                    const nonce = Buffer.alloc(12);
+                    const decryptedData = sodium.api.crypto_aead_chacha20poly1305_ietf_decrypt_detached(frame.encryptedData, frame.authTag, frame.additionalAuthenticatedData, nonce, session.decryptContext.sessionKey);
+                    if (!decryptedData) {
+                        throw new Error('could not decrypt incoming data.');
+                    }
+                    decrypted.push(decryptedData);
+                }
+                return Buffer.concat(decrypted);
+            }
         } else {
             return chunk;
         }
@@ -146,6 +162,7 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
             // TODO: Encrypt!
             console.log('encrypted');
         } else {
+
             return chunk;
         }
 
@@ -723,17 +740,7 @@ export class HAPServer implements ProxyHandler, HTTPHandler {
         session.decryptContext.active = true;
 
 
-        session.parser = new FrameParser(2, 16);
-        session.parser.on('encryptedData', (message: Frame) => {
-            const nonce = Buffer.alloc(12);
-            const fullMessage = Buffer.concat([message.encryptedData, message.authTag]);
-            const decryptedData = sodium.api.crypto_aead_chacha20poly1305_ietf_decrypt(fullMessage, message.additionalAuthenticatedData, nonce, controllerToAccessoryKey);
-            if (decryptedData) {
-                console.log(decryptedData);
-                console.log(decryptedData.toString());
-            }
-
-        });
+        session.frameParser = new FrameParser(2, 16);
 
     }
 
