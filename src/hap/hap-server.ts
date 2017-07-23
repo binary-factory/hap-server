@@ -103,6 +103,7 @@ export class HAPServer implements HTTPHandler {
 
     private longTimeKeyPair: AccessoryLongTimeKeyPair;
 
+
     public constructor(private deviceId: string,
                        private modelName: string,
                        private categoryIdentifier) {
@@ -221,7 +222,7 @@ export class HAPServer implements HTTPHandler {
                             response.writeHead(HTTPStatusCodes.BadRequest);
                         }
                     }
-
+                    console.log('body', parsedBody);
                     // Call handler.
                     await matchingRoute.handler(session, request, response, parsedBody);
 
@@ -711,7 +712,28 @@ export class HAPServer implements HTTPHandler {
     }
 
     private async handlePairings(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap): Promise<void> {
+        const tlvTypes = [TLVTypes.State, TLVTypes.Method]; //, TLVTypes.Identifier, TLVTypes.PublicKey, TLVTypes.Permissions];
+        if (!this.assignTLVContains(body, tlvTypes)) {
+            response.writeHead(HTTPStatusCodes.BadRequest);
+            return;
+        }
 
+        const state = body.get(TLVTypes.State);
+        const method = body.get(TLVTypes.Method);
+        /*
+                const deviceIdentifier = body.get(TLVTypes.Identifier);
+                const devicePublicKey = body.get(TLVTypes.PublicKey);
+                const devicePermissions = body.get(TLVTypes.Permissions);
+                */
+        console.log(method);
+
+        //console.log(deviceIdentifier);
+        //console.log(devicePermissions);
+        const responseTLV: tlv.TLVMap = new Map();
+        responseTLV.set(TLVTypes.State, Buffer.from([0x02]));
+
+        response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8, 'Content-Length': 3 });
+        response.write(tlv.encode(responseTLV));
     }
 
     private async handleAttributeDatabase(session: Session, request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
@@ -913,7 +935,10 @@ export class HAPServer implements HTTPHandler {
         };
 
         const out = JSON.stringify(db);
-        response.writeHead(200, { 'Content-Type': HAPContentTypes.JSON });
+        response.writeHead(200, {
+            'Content-Type': HAPContentTypes.JSON
+            , 'Content-Length': out.length
+        });
 
         response.write(out);
     }
