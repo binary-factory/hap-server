@@ -1,4 +1,4 @@
-import { Characteristic } from './characteristic';
+import { Characteristic } from './characteristic/characteristic';
 import { InstanceIdPool } from './instance-id-pool';
 
 export class Service {
@@ -15,7 +15,10 @@ export class Service {
      */
     private characteristics: Map<number, Characteristic> = new Map();
 
-    /** CONDITIONAL. When set to True, this service is not visible to user. */
+    /**
+     * CONDITIONAL. When set to True, this service is not visible to user.
+     * Mandatory if accessory exposes custom services for proprietary controls on the accessory, optional otherwise.
+     */
     private hidden: boolean;
 
     /** OPTIONAL. When set to True, this is the primary service on the accessory. */

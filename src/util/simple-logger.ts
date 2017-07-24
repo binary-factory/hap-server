@@ -1,8 +1,8 @@
 import { Logger } from './logger';
 import { LogLevel } from './debug-level';
-import { TLVMap } from '../transport/tlv';
+import { TLVMap } from '../hap/common/tlv';
 import * as http from 'http';
-import { TLVTypes } from '../hap/constants/tlv-types';
+import { TLVTypes } from '../hap/common/tlv-types';
 import { isUndefined } from 'util';
 
 export class SimpleLogger implements Logger {

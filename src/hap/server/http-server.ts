@@ -1,6 +1,6 @@
 import * as http from 'http';
-import { Address } from './address';
-import { HTTPHandler } from './http-handler';
+import { Address } from '../../transport/address';
+import { HTTPHandler } from '../../transport/http-handler';
 
 export class HttpServer {
 

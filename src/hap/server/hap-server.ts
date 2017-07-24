@@ -2,66 +2,35 @@ import * as crypto from 'crypto';
 import * as http from 'http';
 import { Transform } from 'stream';
 import * as url from 'url';
-import { hkdf } from '../crypto/hkdf/hkdf';
-import { SRPConfigurations } from '../crypto/srp/configurations';
-import { SecureRemotePassword } from '../crypto/srp/srp';
-import { MemoryStorage } from '../services/memory-storage';
-import { Storage } from '../services/storage';
-import { HTTPHandler } from '../transport/http-handler';
-import { HttpServer } from '../transport/http-server';
-import { NetProxy, ProxyConnection } from '../transport/net-proxy';
-import * as tlv from '../transport/tlv';
-import { TLVMap } from '../transport/tlv';
-import { Advertiser } from './advertiser';
-import { ErrorCodes } from './constants/error-codes';
-import { HTTPStatusCodes } from './constants/http-status-codes';
-import { PairMethods } from './constants/pair-methods';
-import { PairState } from './constants/pair-state';
-import { TLVTypes } from './constants/tlv-types';
-import { HAPUrls } from './constants/urls';
-import { VerifyState } from './constants/verify-state';
+import { hkdf } from '../../crypto/hkdf/hkdf';
+import { SRPConfigurations } from '../../crypto/srp/configurations';
+import { SecureRemotePassword } from '../../crypto/srp/srp';
+import { MemoryStorage } from '../../services/memory-storage';
+import { Storage } from '../../services/storage';
+import { HTTPHandler } from '../../transport/http-handler';
+import { HttpServer } from './http-server';
+import { NetProxy, ProxyConnection } from './net-proxy';
+import * as tlv from '../common/tlv';
+import { TLVMap } from '../common/tlv';
+import { ErrorCodes } from '../common/error-codes';
+import { HTTPStatusCodes } from './http-status-codes';
+import { PairMethods } from './pair-methods';
+import { PairState } from './pair-state';
+import { TLVTypes } from '../common/tlv-types';
+import { Urls } from './urls';
+import { VerifyState } from './verify-state';
 import { SecureDecryptStream } from './secure-decrypt-stream';
 import { SecureEncryptStream } from './secure-encrypt-stream';
-import { SimpleLogger } from '../util/simple-logger';
-import { LogLevel } from "../util/debug-level";
-import { Logger } from '../util/logger';
+import { SimpleLogger } from '../../util/simple-logger';
+import { LogLevel } from "../../util/debug-level";
+import { Logger } from '../../util/logger';
+import { Session } from './session';
+import { AccessoryLongTimeKeyPair } from "../common/accessory-longtime-keypair";
+import { HAPContentTypes } from './content-types';
+import { Route } from "./route";
 
 const sodium = require('sodium');
 
-
-export interface AccessoryLongTimeKeyPair {
-    publicKey: Buffer;
-    privateKey: Buffer;
-}
-
-export interface Pairing {
-    devicePairingId: Buffer;
-    deviceLongTimePublicKey: Buffer;
-}
-
-interface PairSetupContext {
-    state: PairState;
-    srp?: SecureRemotePassword;
-    sharedSecret?: Buffer;
-    sessionKey?: Buffer;
-}
-
-interface PairVerifyContext {
-    state: VerifyState;
-    devicePublicKey?: Buffer;
-    accessoryPublicKey?: Buffer;
-    sharedSecret?: Buffer;
-    sessionKey?: Buffer;
-}
-
-export interface Session {
-    authenticationAttempts: number;
-    pairContext: PairSetupContext;
-    verifyContext: PairVerifyContext;
-    decryptStream?: SecureDecryptStream;
-    encryptStream?: SecureEncryptStream;
-
-}
 
 const defaultSession: Session = {
     authenticationAttempts: 0,
@@ -73,18 +42,6 @@ const defaultSession: Session = {
     }
 };
 
-interface Route {
-    pathname: HAPUrls;
-    method: string;
-    contentType: HAPContentTypes;
-    handler: (session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap | any) => Promise<void>;
-}
-
-enum HAPContentTypes {
-    TLV8 = 'application/pairing+tlv8',
-    JSON = 'application/hap+json',
-    EMPTY = ''
-}
 
 export class HAPServer implements HTTPHandler {
 
@@ -136,7 +93,7 @@ export class HAPServer implements HTTPHandler {
         const requestContentType = request.headers['content-type'] || HAPContentTypes.EMPTY;
         const routes: Route[] = [
             {
-                pathname: HAPUrls.PairSetup,
+                pathname: Urls.PairSetup,
                 method: 'POST',
                 contentType: HAPContentTypes.TLV8,
                 handler: (session, request, response, body) => {
@@ -144,7 +101,7 @@ export class HAPServer implements HTTPHandler {
                 }
             },
             {
-                pathname: HAPUrls.PairVerify,
+                pathname: Urls.PairVerify,
                 method: 'POST',
                 contentType: HAPContentTypes.TLV8,
                 handler: (session, request, response, body) => {
@@ -152,7 +109,7 @@ export class HAPServer implements HTTPHandler {
                 }
             },
             {
-                pathname: HAPUrls.Pairings,
+                pathname: Urls.Pairings,
                 method: 'POST',
                 contentType: HAPContentTypes.TLV8,
                 handler: (session, request, response, body) => {
@@ -160,7 +117,7 @@ export class HAPServer implements HTTPHandler {
                 }
             },
             {
-                pathname: HAPUrls.Accessories,
+                pathname: Urls.Accessories,
                 method: 'GET',
                 contentType: HAPContentTypes.EMPTY,
                 handler: (session, request, response, body) => {
@@ -168,21 +125,21 @@ export class HAPServer implements HTTPHandler {
                 }
             },
             {
-                pathname: HAPUrls.Characteristics,
+                pathname: Urls.Characteristics,
                 method: 'GET',
                 contentType: HAPContentTypes.JSON,
                 handler: () => new Promise((resolve, reject) => {
                 })
             },
             {
-                pathname: HAPUrls.Characteristics,
+                pathname: Urls.Characteristics,
                 method: 'PUT',
                 contentType: HAPContentTypes.JSON,
                 handler: () => new Promise((resolve, reject) => {
                 })
             },
             {
-                pathname: HAPUrls.Identify,
+                pathname: Urls.Identify,
                 method: 'POST',
                 contentType: HAPContentTypes.EMPTY,
                 handler: () => new Promise((resolve, reject) => {

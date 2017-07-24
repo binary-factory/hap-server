@@ -1,4 +1,4 @@
-import { HAPServer } from './hap-server';
+import { HAPServer } from './server/hap-server';
 import { Advertiser } from './advertiser';
 import { Service } from './service';
 import { InstanceIdPool } from './instance-id-pool';

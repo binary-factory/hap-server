@@ -1,4 +1,4 @@
-export enum HAPUrls {
+export enum Urls {
     /** Used for Pair Setup. */
     PairSetup = '/pair-setup',
 

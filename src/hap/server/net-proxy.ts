@@ -1,7 +1,7 @@
 import * as events from 'events';
 import * as net from 'net';
 import { Transform } from 'stream';
-import { Address } from './address';
+import { Address } from '../../transport/address';
 
 export class ProxyConnection {
     rayId: number;

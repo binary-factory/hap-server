@@ -1,4 +1,4 @@
-import { AccessoryLongTimeKeyPair } from '../hap/hap-server';
+import { AccessoryLongTimeKeyPair } from '../hap/server/hap-server';
 import { Storage } from './storage';
 
 export class MemoryStorage implements Storage {

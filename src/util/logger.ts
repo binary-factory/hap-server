@@ -1,4 +1,4 @@
-import { TLVMap } from '../transport/tlv';
+import { TLVMap } from '../hap/common/tlv';
 import * as http from 'http';
 import { LogLevel } from './debug-level';
 
