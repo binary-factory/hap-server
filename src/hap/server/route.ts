@@ -2,7 +2,7 @@ import { Session } from './session';
 import * as http from 'http';
 import { HAPContentTypes } from './content-types';
 import { Urls } from './urls';
-import * as tlv from '../common/tlv';
+import * as tlv from '../common/tlv/tlv';
 
 export interface Route {
     pathname: Urls;
