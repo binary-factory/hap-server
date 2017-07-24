@@ -1,4 +1,5 @@
-import { AccessoryLongTimeKeyPair } from '../hap/server/hap-server';
+
+import { AccessoryLongTimeKeyPair } from '../hap/common/accessory-longtime-keypair';
 
 export interface Storage {
 
