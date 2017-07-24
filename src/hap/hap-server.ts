@@ -16,13 +16,15 @@ import { Advertiser } from './advertiser';
 import { ErrorCodes } from './constants/error-codes';
 import { HTTPStatusCodes } from './constants/http-status-codes';
 import { PairMethods } from './constants/pair-methods';
-//import { SimpleLogger } from '../util/simple-logger';
 import { PairState } from './constants/pair-state';
 import { TLVTypes } from './constants/tlv-types';
 import { HAPUrls } from './constants/urls';
 import { VerifyState } from './constants/verify-state';
 import { SecureDecryptStream } from './secure-decrypt-stream';
 import { SecureEncryptStream } from './secure-encrypt-stream';
+import { SimpleLogger } from '../util/simple-logger';
+import { LogLevel } from "../util/debug-level";
+import { Logger } from '../util/logger';
 
 const sodium = require('sodium');
 
@@ -58,6 +60,7 @@ export interface Session {
     verifyContext: PairVerifyContext;
     decryptStream?: SecureDecryptStream;
     encryptStream?: SecureEncryptStream;
+
 }
 
 const defaultSession: Session = {
@@ -85,7 +88,7 @@ enum HAPContentTypes {
 
 export class HAPServer implements HTTPHandler {
 
-    //private logger: SimpleLogger = new SimpleLogger('HAPServer');
+    private logger: Logger = new SimpleLogger('HAPServer');
 
     private storage: Storage = new MemoryStorage();
 
@@ -189,9 +192,8 @@ export class HAPServer implements HTTPHandler {
             }
         ];
 
-        console.log(requestPathname);
-        console.log(requestMethod);
-        console.log(requestContentType);
+        this.logger.info('Request on Ray:', proxyConnection.rayId);
+        this.logger.logRequest(LogLevel.Info, request);
 
         // Math pathname.
         let matching: Route[] = routes.filter((route) => route.pathname === requestPathname);
@@ -211,18 +213,25 @@ export class HAPServer implements HTTPHandler {
 
                     // Parse body if not empty.
                     let parsedBody: TLVTypes | any;
-                    if (body.length) {
+                    if (body.length > 0) {
                         try {
                             if (matchingRoute.contentType === HAPContentTypes.TLV8) {
+                                this.logger.debug('parse body as TLV');
                                 parsedBody = tlv.decode(body);
+                                this.logger.logTLV(LogLevel.Debug, parsedBody);
                             } else if (matchingRoute.contentType === HAPContentTypes.JSON) {
+                                this.logger.debug('parse body as JSON');
                                 parsedBody = JSON.parse(body.toString());
+                                this.logger.debug(body.toString());
                             }
                         } catch (err) {
+                            this.logger.error('could not parse body', err);
                             response.writeHead(HTTPStatusCodes.BadRequest);
                         }
+                    } else {
+                        this.logger.debug('empty body');
                     }
-                    console.log('body', parsedBody);
+
                     // Call handler.
                     await matchingRoute.handler(session, request, response, parsedBody);
 
@@ -244,6 +253,7 @@ export class HAPServer implements HTTPHandler {
 
     private createDecryptStream(connection: ProxyConnection): Transform {
         const session = this.sessions.get(connection.rayId);
+        this.logger.debug(`creating decrypt-stream for rayId: ${connection.rayId}`);
         const decryptStream = new SecureDecryptStream();
         session.decryptStream = decryptStream;
 
@@ -252,6 +262,7 @@ export class HAPServer implements HTTPHandler {
 
     private createEncryptStream(connection: ProxyConnection): Transform {
         const session = this.sessions.get(connection.rayId);
+        this.logger.debug(`creating encrypt-stream for rayId: ${connection.rayId}`);
         const encryptStream = new SecureEncryptStream();
         session.encryptStream = encryptStream;
 
@@ -294,12 +305,12 @@ export class HAPServer implements HTTPHandler {
     }
 
     private handleProxyConnect(connection: ProxyConnection) {
-        console.log('proxy connected', connection.rayId);
+        this.logger.debug('proxy connected', connection.rayId);
         this.sessions.set(connection.rayId, defaultSession);
     }
 
     private handleProxyClose(rayId: number) {
-        console.log('proxy closed', rayId);
+        this.logger.debug('proxy closed', rayId);
         this.sessions.delete(rayId);
     }
 
@@ -696,11 +707,11 @@ export class HAPServer implements HTTPHandler {
 
 
         const sharedSecret = session.verifyContext.sharedSecret;
-        const encSalt = Buffer.from('Control-Salt');
-        const infoRead = Buffer.from('Control-Read-Encryption-Key');
-        const infoWrite = Buffer.from('Control-Write-Encryption-Key');
-        const accessoryToControllerKey = hkdf('sha512', sharedSecret, encSalt, infoRead, 32);
-        const controllerToAccessoryKey = hkdf('sha512', sharedSecret, encSalt, infoWrite, 32);
+        const controlSalt = Buffer.from('Control-Salt');
+        const controlReadEncryptionKey = Buffer.from('Control-Read-Encryption-Key');
+        const controlWriteEncryptionKey = Buffer.from('Control-Write-Encryption-Key');
+        const accessoryToControllerKey = hkdf('sha512', sharedSecret, controlSalt, controlReadEncryptionKey, 32);
+        const controllerToAccessoryKey = hkdf('sha512', sharedSecret, controlSalt, controlWriteEncryptionKey, 32);
 
         session.verifyContext.state = VerifyState.M4;
         session.decryptStream.setKey(controllerToAccessoryKey);
@@ -732,212 +743,88 @@ export class HAPServer implements HTTPHandler {
         const responseTLV: tlv.TLVMap = new Map();
         responseTLV.set(TLVTypes.State, Buffer.from([0x02]));
 
-        response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8, 'Content-Length': 3 });
+        response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8 });
         response.write(tlv.encode(responseTLV));
     }
 
     private async handleAttributeDatabase(session: Session, request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
         const db = {
-            'accessories': [
-                {
-                    'aid': 1,
-                    'services': [
-                        {
-                            'type': '3E',
-                            'iid': 1,
-                            'characteristics': [
-                                {
-                                    'type': '23',
-                                    'value': 'Acme Light Bridge',
-                                    'perms': ['pr'],
-                                    'format': 'string',
-                                    'iid': 2
-                                },
-                                {
-                                    'type': '20',
-                                    'value': 'Acme',
-                                    'perms': ['pr'],
-
-                                    'format': 'string',
-                                    'iid': 3
-                                },
-                                {
-                                    'type': '30',
-                                    'value': '037A2BABF19D',
-                                    'perms': ['pr'],
-                                    'format': 'string',
-                                    'iid': 4
-                                },
-                                {
-                                    'type': '21',
-                                    'value': 'Bridge1,1',
-                                    'perms': ['pr'],
-                                    'format': 'string',
-                                    'iid': 5
-                                },
-                                {
-                                    'type': '14',
-                                    'value': null,
-                                    'perms': ['pw'],
-                                    'format': 'bool',
-                                    'iid': 6
-                                }
-                            ]
-                        }
-                    ]
-                },
-
-                {
-                    'aid': 2,
-                    'services': [
-                        {
-                            'type': '3E',
-                            'iid': 1,
-
-                            'characteristics': [
-                                {
-                                    'type': '23',
-                                    'value': 'Acme LED Light Bulb',
-                                    'perms': ['pr'],
-                                    'format': 'string',
-                                    'iid': 2
-                                },
-                                {
-                                    'type': '20',
-                                    'value': 'Acme',
-                                    'perms': ['pr'],
-                                    'format': 'string',
-                                    'iid': 3
-                                },
-                                {
-                                    'type': '30',
-                                    'value': '099DB48E9E28',
-                                    'perms': ['pr'],
-                                    'format': 'string',
-                                    'iid': 4
-                                },
-                                {
-                                    'type': '21',
-                                    'value': 'LEDBulb1,1',
-                                    'perms': ['pr'],
-                                    'format': 'string',
-                                    'iid': 5
-                                },
-                                {
-                                    'type': '14',
-                                    'value': null,
-                                    'perms': ['pw'],
-                                    'format': 'bool',
-                                    'iid': 6
-
-                                }
-                            ]
-                        },
-                        {
-                            'type': '43',
-                            'iid': 7,
-                            'characteristics': [
-                                {
-                                    'type': '25',
-                                    'value': true,
-                                    'perms': ['pr', 'pw'],
-                                    'format': 'bool',
-                                    'iid': 8
-                                },
-                                {
-                                    'type': '8',
-                                    'value': 50,
-                                    'perms': ['pr', 'pw'],
-                                    'iid': 9,
-                                    'maxValue': 100,
-                                    'minStep': 1,
-                                    'minValue': 20,
-                                    'format': 'int',
-                                    'unit': 'percentage'
-                                }
-                            ]
-                        }
-                    ]
-                },
-                {
-                    'aid': 3,
-                    'services': [
-                        {
-                            'type': '3E',
-
-                            'iid': 1,
-                            'characteristics': [
-                                {
-                                    'type': '23',
-                                    'value': 'Acme LED Light Bulb',
-                                    'perms': ['pr'],
-                                    'format': 'string',
-                                    'iid': 2
-                                },
-                                {
-                                    'type': '20',
-                                    'value': 'Acme',
-                                    'perms': ['pr'],
-                                    'format': 'string',
-                                    'iid': 3
-                                },
-                                {
-                                    'type': '30',
-                                    'value': '099DB48E9E28',
-                                    'perms': ['pr'],
-                                    'format': 'string',
-                                    'iid': 4
-                                },
-                                {
-                                    'type': '21',
-                                    'value': 'LEDBulb1,1',
-                                    'perms': ['pr'],
-                                    'format': 'string',
-                                    'iid': 5
-                                },
-                                {
-                                    'type': '14',
-                                    'value': null,
-                                    'perms': ['pw'],
-                                    'format': 'bool',
-
-                                    'iid': 6
-                                }
-                            ]
-                        },
-                        {
-                            'type': '43',
-                            'iid': 7,
-                            'characteristics': [
-                                {
-                                    'type': '25',
-                                    'value': true,
-                                    'perms': ['pr', 'pw'],
-                                    'format': 'bool',
-                                    'iid': 8
-                                },
-                                {
-                                    'type': '8',
-                                    'value': 50,
-                                    'perms': ['pr', 'pw'],
-                                    'iid': 9,
-                                    'maxValue': 100,
-                                    'minStep': 1,
-                                    'minValue': 20,
-                                    'format': 'int',
-                                    'unit': 'percentage'
-                                }
-                            ]
-                        }
-                    ]
-                }
-            ]
+            "accessories": [{
+                "aid": 1,
+                "services": [{
+                    "iid": 1,
+                    "type": "0000003E-0000-1000-8000-0026BB765291",
+                    "characteristics": [{
+                        "iid": 2,
+                        "type": "00000014-0000-1000-8000-0026BB765291",
+                        "perms": ["pw"],
+                        "format": "bool",
+                        "description": "Identify"
+                    }, {
+                        "iid": 3,
+                        "type": "00000020-0000-1000-8000-0026BB765291",
+                        "perms": ["pr"],
+                        "format": "string",
+                        "value": "Sample Company",
+                        "description": "Manufacturer"
+                    }, {
+                        "iid": 4,
+                        "type": "00000021-0000-1000-8000-0026BB765291",
+                        "perms": ["pr"],
+                        "format": "string",
+                        "value": "Default-Model",
+                        "description": "Model"
+                    }, {
+                        "iid": 5,
+                        "type": "00000023-0000-1000-8000-0026BB765291",
+                        "perms": ["pr"],
+                        "format": "string",
+                        "value": "Fan",
+                        "description": "Name"
+                    }, {
+                        "iid": 6,
+                        "type": "00000030-0000-1000-8000-0026BB765291",
+                        "perms": ["pr"],
+                        "format": "string",
+                        "value": "Default-SerialNumber",
+                        "description": "Serial Number"
+                    }]
+                }, {
+                    "iid": 7,
+                    "type": "00000040-0000-1000-8000-0026BB765291",
+                    "characteristics": [{
+                        "iid": 8,
+                        "type": "00000023-0000-1000-8000-0026BB765291",
+                        "perms": ["pr"],
+                        "format": "string",
+                        "value": "Fan",
+                        "description": "Name"
+                    }, {
+                        "iid": 9,
+                        "type": "00000025-0000-1000-8000-0026BB765291",
+                        "perms": ["pr", "pw", "ev"],
+                        "format": "bool",
+                        "value": false,
+                        "description": "On"
+                    }, {
+                        "iid": 10,
+                        "type": "00000029-0000-1000-8000-0026BB765291",
+                        "perms": ["pr", "pw", "ev"],
+                        "format": "float",
+                        "value": 0,
+                        "description": "Rotation Speed",
+                        "unit": "percentage",
+                        "maxValue": 100,
+                        "minValue": 0,
+                        "minStep": 1
+                    }]
+                }]
+            }]
         };
 
         const out = JSON.stringify(db);
         response.writeHead(200, {
             'Content-Type': HAPContentTypes.JSON
-            , 'Content-Length': out.length
         });
 
         response.write(out);

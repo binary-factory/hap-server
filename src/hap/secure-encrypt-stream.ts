@@ -1,9 +1,13 @@
 import { Transform } from 'stream';
+import { Logger } from '../util/logger';
+import { SimpleLogger } from '../util/simple-logger';
 
 const sodium = require('sodium');
 
 
 export class SecureEncryptStream extends Transform {
+    private logger: Logger = new SimpleLogger('SecureEncryptStream');
+
     private key: Buffer;
     private enabled: boolean = false;
     private counter = 0; //TODO: 64 bit value!
@@ -18,6 +22,7 @@ export class SecureEncryptStream extends Transform {
                 + 'size: ' + chunk.length + '\n'
                 + chunk.toString()
                 + '\n--------------------------------------\n');
+
             // Split each message into frames no larger than 1024 bytes.
             const frames: Buffer[] = [];
             let offset = 0;
