@@ -100,16 +100,11 @@ export class HAPServer implements HTTPHandler {
 
     private httpServer: HttpServer = new HttpServer(this);
 
-    private advertiser: Advertiser;
-
     private sessions: Map<number, Session> = new Map();
 
     private longTimeKeyPair: AccessoryLongTimeKeyPair;
 
-
-    public constructor(private deviceId: string,
-                       private modelName: string,
-                       private categoryIdentifier) {
+    public constructor(private deviceId: string) {
 
         this.proxyServer.on('connect', (connection) => {
             this.handleProxyConnect(connection);
@@ -118,8 +113,6 @@ export class HAPServer implements HTTPHandler {
         this.proxyServer.on('close', (rayId) => {
             this.handleProxyClose(rayId);
         });
-
-        this.advertiser = new Advertiser(deviceId, modelName, categoryIdentifier, 1);
     }
 
     async handleRequest(request: http.IncomingMessage, response: http.ServerResponse, body: Buffer): Promise<void> {
@@ -131,6 +124,11 @@ export class HAPServer implements HTTPHandler {
         }
 
         const session = this.sessions.get(proxyConnection.rayId);
+        if (!session) {
+            this.logger.debug('no session found for rayId', proxyConnection.rayId);
+            request.socket.end();
+            return;
+        }
 
         // Route request.
         const requestPathname = url.parse(request.url).pathname;
@@ -273,7 +271,7 @@ export class HAPServer implements HTTPHandler {
         this.longTimeKeyPair = await this.getLongTimeKeyPair();
 
         // TODO: Move to index because will be singleton.
-        const storageConnected = await  this.storage.connect();
+        const storageConnected = await this.storage.connect();
         if (!storageConnected) {
             throw new Error('Storage not connected!');
         }
@@ -282,8 +280,10 @@ export class HAPServer implements HTTPHandler {
 
         const proxyAddress = await this.proxyServer.listen(httpAddress.address, httpAddress.port);
 
-        const service = await this.advertiser.start(proxyAddress.port);
-
+        return {
+            httpAddress,
+            proxyAddress
+        }
     }
 
     private async getLongTimeKeyPair(): Promise<AccessoryLongTimeKeyPair> {
@@ -484,7 +484,6 @@ export class HAPServer implements HTTPHandler {
         // Decode sub-tlv.
         const subTLV = tlv.decode(decryptedData);
         const devicePairingId = subTLV.get(TLVTypes.Identifier);
-        console.log('devicePairingId', devicePairingId.toString());
         const deviceLongTimePublicKey = subTLV.get(TLVTypes.PublicKey);
         const deviceSignature = subTLV.get(TLVTypes.Signature);
 

@@ -5,7 +5,7 @@ export enum StatusCodes {
         /** Request denied due to insufficient privileges. */
     RequestDenied = -70401,
 
-        /** Unable to communicate with requested service, e.g. the power to the accessory was turned off. */
+        /** Unable to communicate with requested service.ts, e.g. the power to the accessory was turned off. */
     ServiceUnavailable = -70402,
 
         /** Resource is busy, try again. */
