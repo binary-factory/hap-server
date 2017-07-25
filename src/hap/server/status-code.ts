@@ -1,4 +1,4 @@
-export enum StatusCodes {
+export enum StatusCode {
     /** This specifies a success for the request. */
     Success = 0,
 

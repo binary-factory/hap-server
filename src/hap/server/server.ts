@@ -13,11 +13,9 @@ import { ProxyConnection, ProxyServer } from '../../transport/proxy';
 import { Logger, LogLevel, SimpleLogger } from '../../util/logger';
 import { Accessory } from '../accessory';
 import { Advertiser } from '../advertiser';
-import { CharacteristicCapability } from '../characteristic/capability';
-import { CharacteristicConfiguration } from '../characteristic/configuration';
-import { CharacteristicFormat } from '../characteristic/format';
-import { DeviceConfiguration, StatusCodes } from '../common';
-import { InstanceIdPool } from '../common/instance-id-pool';
+import { CharacteristicCapability, CharacteristicConfiguration, CharacteristicFormat } from '../characteristic';
+import { CharacteristicReadValueResult } from '../characteristic/read-value-result';
+import { DeviceConfiguration, InstanceIdPool, StatusCode } from '../common';
 import { TLVType } from '../common/tlv';
 import * as tlv from '../common/tlv/tlv';
 import { CharacteristicReadRequest } from './characteristic-read-request';
@@ -725,7 +723,7 @@ export class HAPServer implements HTTPHandler {
             responseTLV.set(TLVType.State, Buffer.from([VerifyState.M4]));
             responseTLV.set(TLVType.Error, Buffer.from([PairErrorCode.Authentication]));
 
-            response.writeHead(HTTPStatusCode.BadRequest, { 'Content-Type': ContentType.TLV8 });
+            response.writeHead(HTTPStatusCode.BadRequest, { 'Content-Type': ContentType.TLV8 }); //TODO: Maybe other HTTP-Code?
             response.write(tlv.encode(responseTLV));
             return;
         }
@@ -808,42 +806,60 @@ export class HAPServer implements HTTPHandler {
         const query = url.parse(request.url).query;
         const characteristicRead: CharacteristicReadRequest = querystring.parse(query);
 
+        // TODO: Respect this.
         const includeMeta = characteristicRead.meta === '1';
         const includeCapability = characteristicRead.perms === '1';
         const includeType = characteristicRead.type === '1';
         const includeEventStatus = characteristicRead.ev === '1';
 
-        const result = [];
+        const results = [];
+        const pendingReads: Promise<CharacteristicReadValueResult>[] = [];
         const tuples = characteristicRead.id.split(',');
         for (const tuple of tuples) { // TODO: Validation? Check if failsafe?
             const splitted = tuple.split('.');
             const accessoryInstanceId = parseInt(splitted[0]);
             const characteristicInstanceId = parseInt(splitted[1]);
-            const status = {
+            const result = {
                 aid: accessoryInstanceId,
                 iid: characteristicInstanceId,
                 status: undefined,
                 value: undefined
             };
-            result.push(status);
+            results.push(result);
 
             const accessory = this.accessories.get(accessoryInstanceId);
             if (!accessory) {
-                status.status = StatusCodes.NotFound;
+                result.status = StatusCode.NotFound;
                 continue;
             }
 
             const characteristic = accessory.getCharacteristicByInstanceId(characteristicInstanceId);
             if (!characteristic) {
-                status.status = StatusCodes.NotFound;
+                result.status = StatusCode.NotFound;
                 continue;
             }
 
-            status.value = characteristic.value;
+            const pendingRead = characteristic.readValue();
+            pendingReads.push(pendingRead);
         }
 
-        const responseJSON = JSON.stringify({ 'characteristics': result });
-        const errorCount = result.find((result) => result.status !== StatusCodes.Success).length;
+        this.logger.debug('waiting for all read operations.');
+        let errorCount = 0;
+        const readResults = await Promise.all(pendingReads);
+        for (let i = 0; i < readResults.length; i++) {
+            const readResult = readResults[i];
+            const result = results[i];
+
+            if (readResult.status === StatusCode.Success) {
+                result.value = readResult.value;
+            } else {
+                result.status = readResult.status;
+                errorCount++;
+            }
+        }
+        this.logger.debug('all read operations complete.');
+
+        const responseJSON = JSON.stringify({ 'characteristics': results });
         if (errorCount > 0) {
             this.logger.info(`${errorCount} of ${body.characteristics.length} read operation failed!`);
             this.logger.info(responseJSON);
@@ -861,49 +877,66 @@ export class HAPServer implements HTTPHandler {
         // All characteristics write operations must complete with success or failure before sending a response or handling other requests.
         this.logger.debug('characteristic write', body);
 
-        const result = [];
+        const pendingWrites: Promise<StatusCode>[] = [];
+        const results = [];
         for (const characteristicWrite of body.characteristics) {
-            const status = {
+            const result = {
                 aid: characteristicWrite.aid,
                 iid: characteristicWrite.iid,
                 status: undefined
             }; // TODO: As interface.
-            result.push(status);
+            results.push(result);
 
             const accessory = this.accessories.get(characteristicWrite.aid);
             if (!accessory) {
-                status.status = StatusCodes.NotFound;
+                result.status = StatusCode.NotFound;
                 continue;
             }
 
             const characteristic = accessory.getCharacteristicByInstanceId(characteristicWrite.iid);
             if (!characteristic) {
-                status.status = StatusCodes.NotFound;
+                result.status = StatusCode.NotFound;
                 continue;
             }
 
             if (characteristicWrite.hasOwnProperty('value')) {
                 this.logger.info(`writing value to: ${characteristicWrite.aid}:${characteristicWrite.iid}`);
-                characteristic.value = characteristicWrite.value;
-                console.log(characteristic.value);
+                const pendingWrite = characteristic.writeValue(characteristicWrite.value);
+                pendingWrites.push(pendingWrite);
+
             } else if (characteristicWrite.hasOwnProperty('ev')) {
                 // Subscribing.
                 this.logger.info(`subscription to: ${characteristicWrite.aid}:${characteristicWrite.iid}`);
+
             } else {
-                status.status = StatusCodes.InvalidRequest;
+                result.status = StatusCode.InvalidRequest;
             }
         }
 
-        const errorCount = result.find((result) => result.status !== StatusCodes.Success).length;
+        this.logger.debug('waiting for all write operations.');
+        // Wait for all pending writes.
+        let errorCount = 0;
+        const writeResults = await Promise.all(pendingWrites);
+        for (let i = 0; i < writeResults.length; i++) {
+            const writeResult = writeResults[i];
+            const result = results[i];
+
+            result.status = writeResult;
+            if (writeResult !== StatusCode.Success) {
+                errorCount++;
+            }
+        }
+        this.logger.debug('finished all write operations.');
+
         if (errorCount > 0) {
             this.logger.info(`${errorCount} of ${body.characteristics.length} write operation failed!`);
             response.writeHead(HTTPStatusCode.MultiStatus, { 'Content-Type': ContentType.JSON });
-            const responseJSON = JSON.stringify({ 'characteristics': result });
+            const responseJSON = JSON.stringify({ 'characteristics': results });
             this.logger.info(responseJSON);
             response.write(responseJSON);
         } else {
             response.writeHead(HTTPStatusCode.NoContent);
-            this.logger.info('all write operation succeeded!');
+            this.logger.info('all write operation succeeded!', results);
         }
     }
 
