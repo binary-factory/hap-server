@@ -1,5 +1,6 @@
 import * as crypto from 'crypto';
 import * as http from 'http';
+import * as querystring from 'querystring';
 import { Transform } from 'stream';
 import * as url from 'url';
 import { hkdf } from '../../crypto/hkdf/hkdf';
@@ -15,10 +16,12 @@ import { Advertiser } from '../advertiser';
 import { CharacteristicCapability } from '../characteristic/capability';
 import { CharacteristicConfiguration } from '../characteristic/configuration';
 import { CharacteristicFormat } from '../characteristic/format';
-import { DeviceInformation } from '../common';
+import { DeviceConfiguration, StatusCodes } from '../common';
 import { InstanceIdPool } from '../common/instance-id-pool';
 import { TLVType } from '../common/tlv';
 import * as tlv from '../common/tlv/tlv';
+import { CharacteristicReadRequest } from './characteristic-read-request';
+import { CharacteristicWriteRequest } from './characteristic-write-request';
 import { ContentType } from './content-type';
 import { PairErrorCode } from './pair-error-code';
 import { PairMethod } from './pair-method';
@@ -56,7 +59,7 @@ export class HAPServer implements HTTPHandler {
 
     private httpServer: HttpServer = new HttpServer(this);
 
-    private advertiser: Advertiser = new Advertiser(this.deviceInformation);
+    private advertiser: Advertiser = new Advertiser(this.configuration);
 
     private sessions: Map<number, Session> = new Map();
 
@@ -66,7 +69,7 @@ export class HAPServer implements HTTPHandler {
 
     private defaultAccessory: Accessory;
 
-    public constructor(private deviceInformation: DeviceInformation, private pinCode: string) {
+    public constructor(private configuration: DeviceConfiguration, private pinCode: string) {
 
         // TODO: Move to property initialization and use may a "ProxyTransformProvider" interface?
         this.proxyServer = new ProxyServer((connection) => {
@@ -179,6 +182,7 @@ export class HAPServer implements HTTPHandler {
         const requestPathname = url.parse(request.url).pathname;
         const requestMethod = request.method;
         const requestContentType = request.headers['content-type'] || ContentType.EMPTY;
+        // TODO: Build only once.
         const routes: Route[] = [
             {
                 pathname: Urls.PairSetup,
@@ -215,7 +219,7 @@ export class HAPServer implements HTTPHandler {
             {
                 pathname: Urls.Characteristics,
                 method: 'GET',
-                contentType: ContentType.JSON,
+                contentType: ContentType.EMPTY,
                 handler: (session, request, response, body) => {
                     return this.handleCharacteristicRead(session, request, response, body);
                 }
@@ -336,7 +340,7 @@ export class HAPServer implements HTTPHandler {
     // TODO: Move a generic crypto namespace.
     private async getLongTimeKeyPair(): Promise<AccessoryLongTimeKeyPair> {
         // Generate accessories Ed25519 long-term public key, AccessoryLTPK, and long-term secret key, AccessoryLTSK.
-        let longTimeKeyPair = await this.storage.getAccessoryLongTimeKeyPair(this.deviceInformation.deviceId);
+        let longTimeKeyPair = await this.storage.getAccessoryLongTimeKeyPair(this.configuration.deviceId);
         if (!longTimeKeyPair) {
             const keyPair = sodium.api.crypto_sign_ed25519_keypair();
             if (!keyPair) {
@@ -564,7 +568,7 @@ export class HAPServer implements HTTPHandler {
         const accessoryX = hkdf('sha512', session.pairContext.sharedSecret, pairSetupAccessorySignSalt, pairSetupAccessorySignInfo, 32);
 
         // Signing AccessorySignature.
-        const accessoryPairingId = Buffer.from(this.deviceInformation.deviceId);
+        const accessoryPairingId = Buffer.from(this.configuration.deviceId);
         const accessoryInfo = Buffer.concat([accessoryX, accessoryPairingId, accessoryLongTimePublicKey]);
         const accessorySignature = sodium.api.crypto_sign_ed25519_detached(accessoryInfo, accessoryLongTimePrivateKey);
         if (!accessorySignature) {
@@ -642,7 +646,7 @@ export class HAPServer implements HTTPHandler {
 
         const accessoryLongTimePrivateKey = this.longTimeKeyPair.privateKey;
 
-        const accessoryPairingId = Buffer.from(this.deviceInformation.deviceId);
+        const accessoryPairingId = Buffer.from(this.configuration.deviceId);
         const accessoryInfo = Buffer.concat([accessoryPublicKey, accessoryPairingId, clientPublicKey]);
         const accessorySignature = sodium.api.crypto_sign_ed25519_detached(accessoryInfo, accessoryLongTimePrivateKey);
         if (!accessorySignature) {
@@ -796,24 +800,116 @@ export class HAPServer implements HTTPHandler {
     private async handleAttributeDatabase(session: Session, request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
         const accessoriesArray = Array.from(this.accessories.values());
         const responseJSON = JSON.stringify({ 'accessories': accessoriesArray });
-        response.writeHead(200, { 'Content-Type': ContentType.JSON });
+        response.writeHead(HTTPStatusCode.OK, { 'Content-Type': ContentType.JSON });
         response.write(responseJSON);
     }
 
     private async handleCharacteristicRead(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: any): Promise<void> {
-        this.logger.debug('characteristic read', body);
+        const query = url.parse(request.url).query;
+        const characteristicRead: CharacteristicReadRequest = querystring.parse(query);
+
+        const includeMeta = characteristicRead.meta === '1';
+        const includeCapability = characteristicRead.perms === '1';
+        const includeType = characteristicRead.type === '1';
+        const includeEventStatus = characteristicRead.ev === '1';
+
+        const result = [];
+        const tuples = characteristicRead.id.split(',');
+        for (const tuple of tuples) { // TODO: Validation? Check if failsafe?
+            const splitted = tuple.split('.');
+            const accessoryInstanceId = parseInt(splitted[0]);
+            const characteristicInstanceId = parseInt(splitted[1]);
+            const status = {
+                aid: accessoryInstanceId,
+                iid: characteristicInstanceId,
+                status: undefined,
+                value: undefined
+            };
+            result.push(status);
+
+            const accessory = this.accessories.get(accessoryInstanceId);
+            if (!accessory) {
+                status.status = StatusCodes.NotFound;
+                continue;
+            }
+
+            const characteristic = accessory.getCharacteristicByInstanceId(characteristicInstanceId);
+            if (!characteristic) {
+                status.status = StatusCodes.NotFound;
+                continue;
+            }
+
+            status.value = characteristic.value;
+        }
+
+        const responseJSON = JSON.stringify({ 'characteristics': result });
+        const errorCount = result.find((result) => result.status !== StatusCodes.Success).length;
+        if (errorCount > 0) {
+            this.logger.info(`${errorCount} of ${body.characteristics.length} read operation failed!`);
+            this.logger.info(responseJSON);
+
+            response.writeHead(HTTPStatusCode.MultiStatus, { 'Content-Type': ContentType.JSON });
+        } else {
+            this.logger.info('all read operation succeeded!');
+            response.writeHead(HTTPStatusCode.OK, { 'Content-Type': ContentType.JSON });
+        }
+
+        response.write(responseJSON);
     }
 
-    private async handleCharacteristicWrite(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: any): Promise<void> {
+    private async handleCharacteristicWrite(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: CharacteristicWriteRequest): Promise<void> {
         // All characteristics write operations must complete with success or failure before sending a response or handling other requests.
         this.logger.debug('characteristic write', body);
-        response.writeHead(HTTPStatusCode.NoContent, { 'Content-Type': ContentType.JSON });
-        // TODO: Implement.
 
+        const result = [];
+        for (const characteristicWrite of body.characteristics) {
+            const status = {
+                aid: characteristicWrite.aid,
+                iid: characteristicWrite.iid,
+                status: undefined
+            }; // TODO: As interface.
+            result.push(status);
+
+            const accessory = this.accessories.get(characteristicWrite.aid);
+            if (!accessory) {
+                status.status = StatusCodes.NotFound;
+                continue;
+            }
+
+            const characteristic = accessory.getCharacteristicByInstanceId(characteristicWrite.iid);
+            if (!characteristic) {
+                status.status = StatusCodes.NotFound;
+                continue;
+            }
+
+            if (characteristicWrite.hasOwnProperty('value')) {
+                this.logger.info(`writing value to: ${characteristicWrite.aid}:${characteristicWrite.iid}`);
+                characteristic.value = characteristicWrite.value;
+                console.log(characteristic.value);
+            } else if (characteristicWrite.hasOwnProperty('ev')) {
+                // Subscribing.
+                this.logger.info(`subscription to: ${characteristicWrite.aid}:${characteristicWrite.iid}`);
+            } else {
+                status.status = StatusCodes.InvalidRequest;
+            }
+        }
+
+        const errorCount = result.find((result) => result.status !== StatusCodes.Success).length;
+        if (errorCount > 0) {
+            this.logger.info(`${errorCount} of ${body.characteristics.length} write operation failed!`);
+            response.writeHead(HTTPStatusCode.MultiStatus, { 'Content-Type': ContentType.JSON });
+            const responseJSON = JSON.stringify({ 'characteristics': result });
+            this.logger.info(responseJSON);
+            response.write(responseJSON);
+        } else {
+            response.writeHead(HTTPStatusCode.NoContent);
+            this.logger.info('all write operation succeeded!');
+        }
     }
 
     private async handleIdentify(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: any): Promise<void> {
         this.logger.debug('characteristic identify', body);
+        response.writeHead(HTTPStatusCode.NoContent, { 'Content-Type': ContentType.JSON });
         // TODO: Implement.
     }
 }

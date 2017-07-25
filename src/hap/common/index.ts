@@ -1,2 +1,3 @@
-export * from './device-information';
+export * from './device-configuration';
+export * from './instance-id-pool';
 export * from './status-codes';

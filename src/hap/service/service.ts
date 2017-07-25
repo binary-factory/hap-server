@@ -30,6 +30,10 @@ export class Service {
         return characteristic;
     }
 
+    getCharacteristicByInstanceId(instanceId: number): Characteristic {
+        return this.characteristics.get(instanceId);
+    }
+
     setCharacteristicByType(type: string, value: any) {
 
     }

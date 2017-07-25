@@ -1,11 +1,11 @@
 import * as mdns from 'mdns';
-import { DeviceInformation } from './common';
+import { DeviceConfiguration } from './common';
 
 export class Advertiser {
 
     private advertisement: mdns.Advertisement;
 
-    constructor(private deviceInformation: DeviceInformation) {
+    constructor(private deviceInformation: DeviceConfiguration) {
     }
 
     start(port: number): Promise<mdns.Service> {

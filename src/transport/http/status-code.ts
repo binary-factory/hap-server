@@ -21,5 +21,7 @@ export enum HTTPStatusCode {
 
     UnsupportedMediaType = 415,
 
-    NoContent = 204
+    NoContent = 204,
+
+    MultiStatus = 207
 }

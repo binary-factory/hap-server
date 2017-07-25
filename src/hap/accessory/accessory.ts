@@ -1,3 +1,4 @@
+import { Characteristic } from '../characteristic';
 import { InstanceIdPool } from '../common/instance-id-pool';
 import { Service, ServiceConfiguration } from '../service';
 
@@ -9,8 +10,7 @@ export class Accessory {
     private services: Map<number, Service> = new Map();
 
     constructor(/** Integer assigned by the HAP Accessory Server to uniquely identify the HAP Accessory object, see Instance IDs (page 30). */
-                private instanceId: number
-    ) {
+                private instanceId: number) {
     }
 
     addService(serviceConfiguration: ServiceConfiguration): Service {
@@ -19,6 +19,17 @@ export class Accessory {
 
         this.services.set(instanceId, service);
         return service;
+    }
+
+    getCharacteristicByInstanceId(instanceId: number): Characteristic {
+        let characteristic = null;
+        this.services.forEach((service) => {
+            if (!characteristic) {
+                characteristic = service.getCharacteristicByInstanceId(instanceId);
+            }
+        });
+
+        return characteristic;
     }
 
     getInstanceIdPool(): InstanceIdPool {

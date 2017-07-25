@@ -1,6 +1,6 @@
 import { AccessoryCategory } from '../accessory';
 
-export interface DeviceInformation {
+export interface DeviceConfiguration {
     deviceId: string;
     modelName: string;
     primaryFunction: AccessoryCategory

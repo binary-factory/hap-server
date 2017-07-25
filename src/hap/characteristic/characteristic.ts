@@ -4,12 +4,14 @@ import { CharacteristicConfiguration } from './configuration';
 
 export class Characteristic {
 
+    value: any; // TODO: Just for testing.
 
     constructor(private parent: Service,
                 /** REQUIRED. Integer assigned by the HAP Accessory Server to uniquely identify the HAP Characteristic object, see Instance IDs (page 30). */
                 private instanceId: number,
                 private configuration: CharacteristicConfiguration) {
 
+        this.value = configuration.value;
 
     }
 
