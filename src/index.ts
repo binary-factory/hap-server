@@ -3,7 +3,7 @@ import { DeviceConfiguration } from './hap/common';
 import { HAPServer } from './hap/server';
 
 const deviceConfiguration: DeviceConfiguration = {
-    deviceId: '77:22:44:33:22:55',
+    deviceId: '77:33:57:66:44:77',
     modelName: 'Device1,1',
     primaryFunction: AccessoryCategory.Fan
 };

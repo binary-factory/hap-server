@@ -1,20 +1,91 @@
+import * as events from 'events';
+import { StatusCode } from '../server/status-code';
 import { Service } from '../service';
 import { CharacteristicCapability } from './capability';
 import { CharacteristicConfiguration } from './configuration';
+import { CharacteristicFormat } from './format';
+import { CharacteristicReadValueResult } from './read-value-result';
 
-export class Characteristic {
+export class Characteristic extends events.EventEmitter {
 
-    value: any; // TODO: Just for testing.
+    // TODO: Implement
+    private busy: boolean = false;
+
+    private value: any;
 
     constructor(private parent: Service,
                 /** REQUIRED. Integer assigned by the HAP Accessory Server to uniquely identify the HAP Characteristic object, see Instance IDs (page 30). */
                 private instanceId: number,
                 private configuration: CharacteristicConfiguration) {
 
-        this.value = configuration.value;
+        super();
 
+        if (!this.verifyValue(configuration.value)) {
+            throw new Error('invalid default value!');
+        }
+        this.value = configuration.value;
     }
 
+    verifyValue(value: any): boolean {
+        if (this.configuration.format === CharacteristicFormat.Boolean) {
+
+        } else if (this.configuration.format === CharacteristicFormat.UInt8) {
+
+        } else if (this.configuration.format === CharacteristicFormat.UInt16) {
+
+        } else if (this.configuration.format === CharacteristicFormat.UInt32) {
+
+        } else if (this.configuration.format === CharacteristicFormat.UInt64) {
+
+        } else if (this.configuration.format === CharacteristicFormat.Int32) {
+
+        } else if (this.configuration.format === CharacteristicFormat.Float64) {
+
+        } else if (this.configuration.format === CharacteristicFormat.String) {
+
+        } else if (this.configuration.format === CharacteristicFormat.TLV8) {
+
+        } else if (this.configuration.format === CharacteristicFormat.Data) {
+
+        }
+        return true;
+    }
+
+    async readValue(): Promise<CharacteristicReadValueResult> {
+        const value = this.value;
+        if (!this.verifyValue(value)) {
+            //log:
+        }
+
+
+        return { value, status: StatusCode.Success };
+    }
+
+    async writeValue(value: any): Promise<StatusCode> {
+        if (!this.verifyValue(value)) {
+            return StatusCode.InvalidRequest;
+        }
+        this.value = value;
+        return StatusCode.Success;
+    }
+
+    isBusy(): boolean {
+        return false;
+    }
+
+    isWriteable(): boolean {
+        return this.configuration.capabilities.indexOf(CharacteristicCapability.PairedWrite) > -1;
+    }
+
+    isReadable(): boolean {
+        return this.configuration.capabilities.indexOf(CharacteristicCapability.PairedRead) > -1;
+    }
+
+    isNotificationSupported(): boolean {
+        return this.configuration.capabilities.indexOf(CharacteristicCapability.Events) > -1;
+    }
+
+    // TODO: That can be easier!
     toJSON(): Object {
         // Required properties.
         let characteristicObject = {

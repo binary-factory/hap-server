@@ -820,23 +820,53 @@ export class HAPServer implements HTTPHandler {
             const accessoryInstanceId = parseInt(splitted[0]);
             const characteristicInstanceId = parseInt(splitted[1]);
             const result = {
-                aid: accessoryInstanceId,
-                iid: characteristicInstanceId,
-                status: undefined,
-                value: undefined
+                'aid': accessoryInstanceId,
+                'iid': characteristicInstanceId,
+                'status': undefined,
+                'value': undefined
             };
             results.push(result);
 
             const accessory = this.accessories.get(accessoryInstanceId);
             if (!accessory) {
+                this.logger.warn('rejecting characteristic read: Accessory not found!');
                 result.status = StatusCode.NotFound;
                 continue;
             }
 
             const characteristic = accessory.getCharacteristicByInstanceId(characteristicInstanceId);
             if (!characteristic) {
+                this.logger.warn('rejecting characteristic read: Characteristic not found!');
                 result.status = StatusCode.NotFound;
                 continue;
+            }
+
+            if (!characteristic.isReadable()) {
+                this.logger.warn('rejecting characteristic read: Not readable!');
+                result.status = StatusCode.CannotRead;
+                continue;
+            }
+
+            if (characteristic.isBusy()) {
+                this.logger.warn('rejecting characteristic read: Busy!');
+                result.status = StatusCode.Busy;
+                continue;
+            }
+
+            if (includeMeta) {
+                // TODO: Implement.
+            }
+
+            if (includeCapability) {
+                // TODO: Implement.
+            }
+
+            if (includeType) {
+                // TODO: Implement.
+            }
+
+            if (includeEventStatus) {
+                // TODO: Implement.
             }
 
             const pendingRead = characteristic.readValue();
@@ -861,12 +891,11 @@ export class HAPServer implements HTTPHandler {
 
         const responseJSON = JSON.stringify({ 'characteristics': results });
         if (errorCount > 0) {
-            this.logger.info(`${errorCount} of ${body.characteristics.length} read operation failed!`);
-            this.logger.info(responseJSON);
-
+            this.logger.warn(`${errorCount} of ${body.characteristics.length} read operation failed!`);
             response.writeHead(HTTPStatusCode.MultiStatus, { 'Content-Type': ContentType.JSON });
+
         } else {
-            this.logger.info('all read operation succeeded!');
+            this.logger.debug('all read operation succeeded!');
             response.writeHead(HTTPStatusCode.OK, { 'Content-Type': ContentType.JSON });
         }
 
@@ -881,31 +910,46 @@ export class HAPServer implements HTTPHandler {
         const results = [];
         for (const characteristicWrite of body.characteristics) {
             const result = {
-                aid: characteristicWrite.aid,
-                iid: characteristicWrite.iid,
-                status: undefined
-            }; // TODO: As interface.
+                'aid': characteristicWrite.aid,
+                'iid': characteristicWrite.iid,
+                'status': undefined
+            };
             results.push(result);
 
             const accessory = this.accessories.get(characteristicWrite.aid);
             if (!accessory) {
+                this.logger.warn('rejecting characteristic write: Accessory not found!');
                 result.status = StatusCode.NotFound;
                 continue;
             }
 
             const characteristic = accessory.getCharacteristicByInstanceId(characteristicWrite.iid);
             if (!characteristic) {
+                this.logger.warn('rejecting characteristic write: Characteristic not found!');
                 result.status = StatusCode.NotFound;
                 continue;
             }
 
             if (characteristicWrite.hasOwnProperty('value')) {
-                this.logger.info(`writing value to: ${characteristicWrite.aid}:${characteristicWrite.iid}`);
+                // Controller want to write the value.
+                if (!characteristic.isWriteable()) {
+                    this.logger.warn('rejecting characteristic write: Not writable!');
+                    result.status = StatusCode.CannotWrite;
+                    continue;
+                }
+
+                this.logger.debug(`writing value to: ${characteristicWrite.aid}:${characteristicWrite.iid}`);
                 const pendingWrite = characteristic.writeValue(characteristicWrite.value);
                 pendingWrites.push(pendingWrite);
 
             } else if (characteristicWrite.hasOwnProperty('ev')) {
-                // Subscribing.
+                // Controller wants to subscribe for notification events.
+                if (!characteristic.isNotificationSupported()) {
+                    this.logger.warn('rejecting characteristic write: No event support!');
+                    result.status = StatusCode.NotificationNotSupported;
+                    continue;
+                }
+
                 this.logger.info(`subscription to: ${characteristicWrite.aid}:${characteristicWrite.iid}`);
 
             } else {
@@ -929,14 +973,15 @@ export class HAPServer implements HTTPHandler {
         this.logger.debug('finished all write operations.');
 
         if (errorCount > 0) {
-            this.logger.info(`${errorCount} of ${body.characteristics.length} write operation failed!`);
-            response.writeHead(HTTPStatusCode.MultiStatus, { 'Content-Type': ContentType.JSON });
+            this.logger.warn(`${errorCount} of ${body.characteristics.length} write operation failed!`);
+
             const responseJSON = JSON.stringify({ 'characteristics': results });
-            this.logger.info(responseJSON);
+            response.writeHead(HTTPStatusCode.MultiStatus, { 'Content-Type': ContentType.JSON });
             response.write(responseJSON);
+
         } else {
             response.writeHead(HTTPStatusCode.NoContent);
-            this.logger.info('all write operation succeeded!', results);
+            this.logger.debug('all write operation succeeded!', results);
         }
     }
 
