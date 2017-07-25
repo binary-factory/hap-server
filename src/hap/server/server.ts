@@ -243,17 +243,17 @@ export class HAPServer implements HTTPHandler {
 
         // Math pathname.
         let matching: Route[] = routes.filter((route) => route.pathname === requestPathname);
-        if (matching) {
+        if (matching.length) {
             // Math method.
             matching = matching.filter((route) => {
                 return route.method === requestMethod;
             });
-            if (matching) {
+            if (matching.length) {
                 // Match content-type.
                 matching = matching.filter((route) => {
                     return route.contentType === requestContentType;
                 });
-                if (matching) {
+                if (matching.length) {
                     // There should be only one route left.
                     const matchingRoute = matching[0];
 
@@ -289,6 +289,7 @@ export class HAPServer implements HTTPHandler {
                 response.writeHead(HTTPStatusCode.MethodNotAllowed);
             }
         } else {
+            this.logger.warn('unresolved route', requestPathname);
             response.writeHead(HTTPStatusCode.NotFound);
         }
 

@@ -1,6 +1,5 @@
 import { Transform } from 'stream';
-import { Logger } from '../../util/logger/logger';
-import { SimpleLogger } from '../../util/logger/simple-logger';
+import { Logger, SimpleLogger } from '../../util/logger';
 
 const sodium = require('sodium');
 
@@ -18,11 +17,11 @@ export class SecureEncryptStream extends Transform {
 
     _transform(chunk: any, encoding: string, callback: Function) {
         if (this.enabled) {
-            console.log('\n--------------------------------------\n'
+            /*console.log('\n--------------------------------------\n'
                 + 'size: ' + chunk.length + '\n'
                 + chunk.toString()
                 + '\n--------------------------------------\n');
-
+*/
             // Split each message into frames no larger than 1024 bytes.
             const frames: Buffer[] = [];
             let offset = 0;
@@ -39,13 +38,13 @@ export class SecureEncryptStream extends Transform {
                 const encryptedMessage = sodium.api.crypto_aead_chacha20poly1305_ietf_encrypt(message, additionalAuthenticatedData, nonce, this.key);
                 const frame = Buffer.concat([additionalAuthenticatedData, encryptedMessage]);
                 frames.push(frame);
-                console.log('\n--------------------------------------\n'
-                    + 'slice: ' + offset + ' to ' + (offset + bytes) + '\n'
-                    + 'message-plain: ' + message + '\n'
-                    + 'bytes ' + bytes + '\n'
-                    + 'nonce' + nonce.toString('hex') + '\n'
-                    + 'additionalAuthenticatedData: ' + additionalAuthenticatedData.toString('hex') + '\n'
-                    + '\n--------------------------------------\n');
+                /* console.log('\n--------------------------------------\n'
+                     + 'slice: ' + offset + ' to ' + (offset + bytes) + '\n'
+                     + 'message-plain: ' + message + '\n'
+                     + 'bytes ' + bytes + '\n'
+                     + 'nonce' + nonce.toString('hex') + '\n'
+                     + 'additionalAuthenticatedData: ' + additionalAuthenticatedData.toString('hex') + '\n'
+                     + '\n--------------------------------------\n');*/
 
                 bytesLeft -= bytes;
                 offset += bytes;

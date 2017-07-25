@@ -78,6 +78,7 @@ export class ProxyServer extends events.EventEmitter {
             localSocket,
             remoteSocket
         };
+        this.connections.push(connection);
         this.emit('connect', connection);
 
         const incomingTransform = this.incomingTransformFactory(connection);
@@ -117,14 +118,12 @@ export class ProxyServer extends events.EventEmitter {
         remoteSocket.on('error', (err) => {
             localSocket.destroy();
         });
-
-        this.connections.push(connection);
     }
 
     private removeConnection(connection: ProxyConnection) {
         const index = this.connections.indexOf(connection);
-        if (index) {
-            this.connections = this.connections.splice(index, 1);
+        if (index > -1) {
+            this.connections.splice(index, 1);
             this.emit('close', connection.rayId);
         }
     }
