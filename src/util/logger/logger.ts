@@ -1,5 +1,5 @@
-import { TLVMap } from '../hap/common/tlv/tlv';
 import * as http from 'http';
+import { TLVMap } from '../../hap/common/tlv/tlv';
 import { LogLevel } from './debug-level';
 
 export interface Logger {

@@ -1,4 +1,4 @@
-export enum PairState {
+export enum PairSetupState {
     INITIAL = 0,
     M1 = 1,
     M2 = 2,

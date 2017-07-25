@@ -1,17 +1,13 @@
 import * as events from 'events';
 import * as net from 'net';
 import { Transform } from 'stream';
-import { Address } from '../../transport/address';
+import { Address } from '../address';
+import { ProxyConnection } from './connection';
 
-export class ProxyConnection {
-    rayId: number;
-    localSocket: net.Socket;
-    remoteSocket: net.Socket;
-}
 
 export type ProxyTransformFactory = (connection: ProxyConnection) => Transform;
 
-export class NetProxy extends events.EventEmitter {
+export class ProxyServer extends events.EventEmitter {
 
     private nativeServer: net.Server;
 

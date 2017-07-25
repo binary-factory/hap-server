@@ -5,29 +5,23 @@ import * as url from 'url';
 import { hkdf } from '../../crypto/hkdf/hkdf';
 import { SRPConfigurations } from '../../crypto/srp/configurations';
 import { SecureRemotePassword } from '../../crypto/srp/srp';
-import { MemoryStorage } from '../../services/memory-storage';
-import { Storage } from '../../services/storage';
-import { HTTPHandler } from '../../transport/http-handler';
-import { HttpServer } from './http-server';
-import { NetProxy, ProxyConnection } from './net-proxy';
+import { MemoryStorage, Storage } from '../../services';
+import { HTTPHandler, HttpServer, HTTPStatusCode } from '../../transport/http';
+import { ProxyConnection, ProxyServer } from '../../transport/proxy';
+import { Logger, LogLevel, SimpleLogger } from '../../util/logger';
+import { TLVType } from '../common/tlv';
 import * as tlv from '../common/tlv/tlv';
-import { TLVMap } from '../common/tlv/tlv';
-import { ErrorCodes } from './error-codes';
-import { HTTPStatusCodes } from './http-status-codes';
-import { PairMethods } from './pair-methods';
-import { PairState } from './pair-state';
-import { TLVTypes } from '../common/tlv/types';
-import { Urls } from './urls';
-import { VerifyState } from './verify-state';
+import { AccessoryLongTimeKeyPair } from '../entity';
+import { ContentType } from './content-type';
+import { PairErrorCode } from './pair-error-code';
+import { PairMethod } from './pair-method';
+import { PairSetupState } from './pair-setup-state';
+import { VerifyState } from './pair-verify-state';
+import { Route } from './route';
 import { SecureDecryptStream } from './secure-decrypt-stream';
 import { SecureEncryptStream } from './secure-encrypt-stream';
-import { SimpleLogger } from '../../util/simple-logger';
-import { LogLevel } from "../../util/debug-level";
-import { Logger } from '../../util/logger';
 import { Session } from './session';
-import { AccessoryLongTimeKeyPair } from "../common/accessory-longtime-keypair";
-import { HAPContentTypes } from './content-types';
-import { Route } from "./route";
+import { Urls } from './url';
 
 const sodium = require('sodium');
 
@@ -35,7 +29,7 @@ const sodium = require('sodium');
 const defaultSession: Session = {
     authenticationAttempts: 0,
     pairContext: {
-        state: PairState.INITIAL
+        state: PairSetupState.INITIAL
     },
     verifyContext: {
         state: VerifyState.INITIAL
@@ -49,7 +43,7 @@ export class HAPServer implements HTTPHandler {
 
     private storage: Storage = new MemoryStorage();
 
-    private proxyServer: NetProxy = new NetProxy((connection) => {
+    private proxyServer: ProxyServer = new ProxyServer((connection) => {
         return this.createDecryptStream(connection);
     }, (connection) => {
         return this.createEncryptStream(connection);
@@ -90,12 +84,12 @@ export class HAPServer implements HTTPHandler {
         // Route request.
         const requestPathname = url.parse(request.url).pathname;
         const requestMethod = request.method;
-        const requestContentType = request.headers['content-type'] || HAPContentTypes.EMPTY;
+        const requestContentType = request.headers['content-type'] || ContentType.EMPTY;
         const routes: Route[] = [
             {
                 pathname: Urls.PairSetup,
                 method: 'POST',
-                contentType: HAPContentTypes.TLV8,
+                contentType: ContentType.TLV8,
                 handler: (session, request, response, body) => {
                     return this.handlePairSetup(session, request, response, body);
                 }
@@ -103,7 +97,7 @@ export class HAPServer implements HTTPHandler {
             {
                 pathname: Urls.PairVerify,
                 method: 'POST',
-                contentType: HAPContentTypes.TLV8,
+                contentType: ContentType.TLV8,
                 handler: (session, request, response, body) => {
                     return this.handlePairVerify(session, request, response, body);
                 }
@@ -111,7 +105,7 @@ export class HAPServer implements HTTPHandler {
             {
                 pathname: Urls.Pairings,
                 method: 'POST',
-                contentType: HAPContentTypes.TLV8,
+                contentType: ContentType.TLV8,
                 handler: (session, request, response, body) => {
                     return this.handlePairings(session, request, response, body);
                 }
@@ -119,7 +113,7 @@ export class HAPServer implements HTTPHandler {
             {
                 pathname: Urls.Accessories,
                 method: 'GET',
-                contentType: HAPContentTypes.EMPTY,
+                contentType: ContentType.EMPTY,
                 handler: (session, request, response, body) => {
                     return this.handleAttributeDatabase(session, request, response);
                 }
@@ -127,21 +121,21 @@ export class HAPServer implements HTTPHandler {
             {
                 pathname: Urls.Characteristics,
                 method: 'GET',
-                contentType: HAPContentTypes.JSON,
+                contentType: ContentType.JSON,
                 handler: () => new Promise((resolve, reject) => {
                 })
             },
             {
                 pathname: Urls.Characteristics,
                 method: 'PUT',
-                contentType: HAPContentTypes.JSON,
+                contentType: ContentType.JSON,
                 handler: () => new Promise((resolve, reject) => {
                 })
             },
             {
                 pathname: Urls.Identify,
                 method: 'POST',
-                contentType: HAPContentTypes.EMPTY,
+                contentType: ContentType.EMPTY,
                 handler: () => new Promise((resolve, reject) => {
                 })
             }
@@ -167,21 +161,21 @@ export class HAPServer implements HTTPHandler {
                     const matchingRoute = matching[0];
 
                     // Parse body if not empty.
-                    let parsedBody: TLVTypes | any;
+                    let parsedBody: TLVType | any;
                     if (body.length > 0) {
                         try {
-                            if (matchingRoute.contentType === HAPContentTypes.TLV8) {
+                            if (matchingRoute.contentType === ContentType.TLV8) {
                                 this.logger.debug('parse body as TLV');
                                 parsedBody = tlv.decode(body);
                                 this.logger.logTLV(LogLevel.Debug, parsedBody);
-                            } else if (matchingRoute.contentType === HAPContentTypes.JSON) {
+                            } else if (matchingRoute.contentType === ContentType.JSON) {
                                 this.logger.debug('parse body as JSON');
                                 parsedBody = JSON.parse(body.toString());
                                 this.logger.debug(body.toString());
                             }
                         } catch (err) {
                             this.logger.error('could not parse body', err);
-                            response.writeHead(HTTPStatusCodes.BadRequest);
+                            response.writeHead(HTTPStatusCode.BadRequest);
                         }
                     } else {
                         this.logger.debug('empty body');
@@ -196,7 +190,7 @@ export class HAPServer implements HTTPHandler {
                 }
 
             } else {
-                response.writeHead(HTTPStatusCodes.MethodNotAllowed);
+                response.writeHead(HTTPStatusCode.MethodNotAllowed);
             }
         } else {
             response.writeHead(404);
@@ -240,7 +234,7 @@ export class HAPServer implements HTTPHandler {
         return {
             httpAddress,
             proxyAddress
-        }
+        };
     }
 
     private async getLongTimeKeyPair(): Promise<AccessoryLongTimeKeyPair> {
@@ -293,44 +287,44 @@ export class HAPServer implements HTTPHandler {
     }
 
     private async handlePairSetup(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap): Promise<void> {
-        const tlvTypes = [TLVTypes.State];
+        const tlvTypes = [TLVType.State];
         if (!this.assignTLVContains(body, tlvTypes)) {
-            response.writeHead(HTTPStatusCodes.BadRequest);
+            response.writeHead(HTTPStatusCode.BadRequest);
             return;
         }
 
-        const state: PairState = body.get(TLVTypes.State).readUInt8(0);
+        const state: PairSetupState = body.get(TLVType.State).readUInt8(0);
         if (state !== (session.pairContext.state + 1)) {
             session.pairContext = defaultSession.pairContext; // TODO: Object.assign({}, defaultSession.pairContext)
-            response.writeHead(HTTPStatusCodes.BadRequest);
+            response.writeHead(HTTPStatusCode.BadRequest);
             return;
         }
 
         switch (state) {
-            case PairState.M1:
+            case PairSetupState.M1:
                 await this.handlePairSetupStepOne(session, request, response, body);
                 break;
 
-            case PairState.M3:
+            case PairSetupState.M3:
                 await this.handlePairSetupStepThree(session, request, response, body);
                 break;
 
-            case PairState.M5:
+            case PairSetupState.M5:
                 await this.handlePairSetupStepFive(session, request, response, body);
                 break;
         }
     }
 
-    private async handlePairSetupStepOne(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: TLVMap) {
-        const tlvTypes = [TLVTypes.Method];
+    private async handlePairSetupStepOne(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap) {
+        const tlvTypes = [TLVType.Method];
         if (!this.assignTLVContains(body, tlvTypes)) {
-            response.writeHead(HTTPStatusCodes.BadRequest);
+            response.writeHead(HTTPStatusCode.BadRequest);
             return;
         }
 
-        const method = body.get(TLVTypes.Method).readUInt8(0);
-        if (method !== PairMethods.PairSetup) {
-            //response.writeHead(HTTPStatusCodes.BadRequest);
+        const method = body.get(TLVType.Method).readUInt8(0);
+        if (method !== PairMethod.PairSetup) {
+            //response.writeHead(HTTPStatusCode.BadRequest);
             // return;
         }
 
@@ -339,38 +333,38 @@ export class HAPServer implements HTTPHandler {
             // TODO: Implement.
         }
 
-        const username = 'Pair-Setup'; // TODO: As property.
+        const username = 'Pair-PairSetupState'; // TODO: As property.
         const password = '123-99-123'; // TODO: As property.
         const serverPrivateKey = crypto.randomBytes(16);
         const salt = crypto.randomBytes(16);
         const srp = new SecureRemotePassword(username, password, salt, SRPConfigurations[3072], serverPrivateKey);
 
 
-        const state = Buffer.from([PairState.M2]);
+        const state = Buffer.from([PairSetupState.M2]);
         const publicKey = srp.getServerPublicKey();
 
         const responseTLV: tlv.TLVMap = new Map();
-        responseTLV.set(TLVTypes.State, state);
-        responseTLV.set(TLVTypes.PublicKey, publicKey);
-        responseTLV.set(TLVTypes.Salt, salt);
+        responseTLV.set(TLVType.State, state);
+        responseTLV.set(TLVType.PublicKey, publicKey);
+        responseTLV.set(TLVType.Salt, salt);
 
-        response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8 });
+        response.writeHead(HTTPStatusCode.OK, { 'Content-Type': ContentType.TLV8 });
         response.write(tlv.encode(responseTLV));
 
-        session.pairContext.state = PairState.M2;
+        session.pairContext.state = PairSetupState.M2;
         session.pairContext.srp = srp;
     }
 
-    private async handlePairSetupStepThree(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: TLVMap) {
+    private async handlePairSetupStepThree(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap) {
         const srp = session.pairContext.srp;
-        const tlvTypes = [TLVTypes.PublicKey, TLVTypes.Proof];
+        const tlvTypes = [TLVType.PublicKey, TLVType.Proof];
         if (!this.assignTLVContains(body, tlvTypes)) {
-            response.writeHead(HTTPStatusCodes.BadRequest);
+            response.writeHead(HTTPStatusCode.BadRequest);
             return;
         }
 
-        const deviceSRPPublicKey = body.get(TLVTypes.PublicKey);
-        const deviceSRPProof = body.get(TLVTypes.Proof);
+        const deviceSRPPublicKey = body.get(TLVType.PublicKey);
+        const deviceSRPProof = body.get(TLVType.Proof);
 
         // Verify client proof.
         srp.setClientPublicKey(deviceSRPPublicKey);
@@ -380,48 +374,48 @@ export class HAPServer implements HTTPHandler {
             session.pairContext = defaultSession.pairContext;
 
             const responseTLV: tlv.TLVMap = new Map();
-            responseTLV.set(TLVTypes.State, Buffer.from([PairState.M4]));
-            responseTLV.set(TLVTypes.Error, Buffer.from([ErrorCodes.Authentication]));
+            responseTLV.set(TLVType.State, Buffer.from([PairSetupState.M4]));
+            responseTLV.set(TLVType.Error, Buffer.from([PairErrorCode.Authentication]));
 
-            response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8 });
+            response.writeHead(HTTPStatusCode.OK, { 'Content-Type': ContentType.TLV8 });
             response.write(tlv.encode(responseTLV));
             return;
         }
 
         // Derive session key from SRP shared secret.
-        const pairSetupEncryptSalt = Buffer.from('Pair-Setup-Encrypt-Salt');
-        const pairSetupEncryptInfo = Buffer.from('Pair-Setup-Encrypt-Info');
+        const pairSetupEncryptSalt = Buffer.from('Pair-PairSetupState-Encrypt-Salt');
+        const pairSetupEncryptInfo = Buffer.from('Pair-PairSetupState-Encrypt-Info');
         const sessionKey = hkdf('sha512', sharedSecret, pairSetupEncryptSalt, pairSetupEncryptInfo, 32);
 
 
         const accessorySRPProof = srp.getProof();
         const responseTLV: tlv.TLVMap = new Map();
-        responseTLV.set(TLVTypes.State, Buffer.from([0x04]));
-        responseTLV.set(TLVTypes.Proof, accessorySRPProof);
+        responseTLV.set(TLVType.State, Buffer.from([0x04]));
+        responseTLV.set(TLVType.Proof, accessorySRPProof);
 
-        response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8 });
+        response.writeHead(HTTPStatusCode.OK, { 'Content-Type': ContentType.TLV8 });
         response.write(tlv.encode(responseTLV));
 
-        session.pairContext.state = PairState.M4;
+        session.pairContext.state = PairSetupState.M4;
         session.pairContext.sharedSecret = sharedSecret;
         session.pairContext.sessionKey = sessionKey;
     }
 
-    private async handlePairSetupStepFive(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: TLVMap) {
-        const tlvTypes = [TLVTypes.EncryptedData];
+    private async handlePairSetupStepFive(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap) {
+        const tlvTypes = [TLVType.EncryptedData];
         if (!this.assignTLVContains(body, tlvTypes)) {
-            response.writeHead(HTTPStatusCodes.BadRequest);
+            response.writeHead(HTTPStatusCode.BadRequest);
             return;
         }
 
         // Check for any errors.
-        const clientError = body.get(TLVTypes.Error);
+        const clientError = body.get(TLVType.Error);
         if (clientError) {
             session.pairContext = defaultSession.pairContext;
             return;
         }
 
-        const encryptedData = body.get(TLVTypes.EncryptedData);
+        const encryptedData = body.get(TLVType.EncryptedData);
 
         // Decrypt sub-tlv.
         const nonceM5 = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x00]), Buffer.from('PS-Msg05')]);
@@ -430,23 +424,23 @@ export class HAPServer implements HTTPHandler {
             session.pairContext = defaultSession.pairContext;
 
             const responseTLV: tlv.TLVMap = new Map();
-            responseTLV.set(TLVTypes.State, Buffer.from([PairState.M5]));
-            responseTLV.set(TLVTypes.Error, Buffer.from([ErrorCodes.Authentication]));
+            responseTLV.set(TLVType.State, Buffer.from([PairSetupState.M5]));
+            responseTLV.set(TLVType.Error, Buffer.from([PairErrorCode.Authentication]));
 
-            response.writeHead(HTTPStatusCodes.BadRequest, { 'Content-Type': HAPContentTypes.TLV8 });
+            response.writeHead(HTTPStatusCode.BadRequest, { 'Content-Type': ContentType.TLV8 });
             response.write(tlv.encode(responseTLV));
             return;
         }
 
         // Decode sub-tlv.
         const subTLV = tlv.decode(decryptedData);
-        const devicePairingId = subTLV.get(TLVTypes.Identifier);
-        const deviceLongTimePublicKey = subTLV.get(TLVTypes.PublicKey);
-        const deviceSignature = subTLV.get(TLVTypes.Signature);
+        const devicePairingId = subTLV.get(TLVType.Identifier);
+        const deviceLongTimePublicKey = subTLV.get(TLVType.PublicKey);
+        const deviceSignature = subTLV.get(TLVType.Signature);
 
         // Derive deviceX from the SRP shared secret.
-        const pairSetupControllerSignSalt = Buffer.from('Pair-Setup-Controller-Sign-Salt');
-        const pairSetupControllerSignInfo = Buffer.from('Pair-Setup-Controller-Sign-Info');
+        const pairSetupControllerSignSalt = Buffer.from('Pair-PairSetupState-Controller-Sign-Salt');
+        const pairSetupControllerSignInfo = Buffer.from('Pair-PairSetupState-Controller-Sign-Info');
         const deviceX = hkdf('sha512', session.pairContext.sharedSecret, pairSetupControllerSignSalt, pairSetupControllerSignInfo, 32);
 
         // Verify the signature of the constructed deviceInfo with the deviceLTPK from the decrypted sub-tlv.
@@ -456,10 +450,10 @@ export class HAPServer implements HTTPHandler {
             session.pairContext = defaultSession.pairContext;
 
             const responseTLV: tlv.TLVMap = new Map();
-            responseTLV.set(TLVTypes.State, Buffer.from([PairState.M6]));
-            responseTLV.set(TLVTypes.Error, Buffer.from([ErrorCodes.Authentication]));
+            responseTLV.set(TLVType.State, Buffer.from([PairSetupState.M6]));
+            responseTLV.set(TLVType.Error, Buffer.from([PairErrorCode.Authentication]));
 
-            response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8 });
+            response.writeHead(HTTPStatusCode.OK, { 'Content-Type': ContentType.TLV8 });
             response.write(tlv.encode(responseTLV));
             return;
         }
@@ -468,8 +462,8 @@ export class HAPServer implements HTTPHandler {
         const accessoryLongTimePrivateKey = this.longTimeKeyPair.privateKey;
 
         // Derive AccessoryX from the SRP shared secret.
-        const pairSetupAccessorySignSalt = Buffer.from('Pair-Setup-Accessory-Sign-Salt');
-        const pairSetupAccessorySignInfo = Buffer.from('Pair-Setup-Accessory-Sign-Info');
+        const pairSetupAccessorySignSalt = Buffer.from('Pair-PairSetupState-Accessory-Sign-Salt');
+        const pairSetupAccessorySignInfo = Buffer.from('Pair-PairSetupState-Accessory-Sign-Info');
         const accessoryX = hkdf('sha512', session.pairContext.sharedSecret, pairSetupAccessorySignSalt, pairSetupAccessorySignInfo, 32);
 
         // Signing AccessorySignature.
@@ -481,9 +475,9 @@ export class HAPServer implements HTTPHandler {
         }
 
         const subTLV2 = new Map();
-        subTLV2.set(TLVTypes.Identifier, accessoryPairingId);
-        subTLV2.set(TLVTypes.PublicKey, accessoryLongTimePublicKey);
-        subTLV2.set(TLVTypes.Signature, accessorySignature);
+        subTLV2.set(TLVType.Identifier, accessoryPairingId);
+        subTLV2.set(TLVType.PublicKey, accessoryLongTimePublicKey);
+        subTLV2.set(TLVType.Signature, accessorySignature);
         const subTLVData = tlv.encode(subTLV2);
 
         const nonceM6 = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x00]), Buffer.from('PS-Msg06')]);
@@ -493,10 +487,10 @@ export class HAPServer implements HTTPHandler {
         }
 
         const responseTLV: tlv.TLVMap = new Map();
-        responseTLV.set(TLVTypes.State, Buffer.from([PairState.M6]));
-        responseTLV.set(TLVTypes.EncryptedData, encryptedSubTLV);
+        responseTLV.set(TLVType.State, Buffer.from([PairSetupState.M6]));
+        responseTLV.set(TLVType.EncryptedData, encryptedSubTLV);
 
-        response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8 });
+        response.writeHead(HTTPStatusCode.OK, { 'Content-Type': ContentType.TLV8 });
         response.write(tlv.encode(responseTLV));
 
         const saved = await this.storage.persistControllerLongTimePublicKey(devicePairingId.toString(), deviceLongTimePublicKey);
@@ -504,21 +498,21 @@ export class HAPServer implements HTTPHandler {
             throw new Error('could not write device long time key to storage.');
         }
 
-        session.pairContext.state = PairState.M6;
+        session.pairContext.state = PairSetupState.M6;
     }
 
     private async handlePairVerify(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap): Promise<void> {
-        const tlvTypes = [TLVTypes.State];
+        const tlvTypes = [TLVType.State];
         if (!this.assignTLVContains(body, tlvTypes)) {
-            response.writeHead(HTTPStatusCodes.BadRequest);
+            response.writeHead(HTTPStatusCode.BadRequest);
             return;
         }
 
-        const state: VerifyState = body.get(TLVTypes.State).readUInt8(0);
+        const state: VerifyState = body.get(TLVType.State).readUInt8(0);
         console.log('verify step', state);
         if (state !== (session.verifyContext.state + 1)) {
             session.verifyContext = defaultSession.verifyContext;
-            response.writeHead(HTTPStatusCodes.BadRequest);
+            response.writeHead(HTTPStatusCode.BadRequest);
             return;
         }
 
@@ -533,14 +527,14 @@ export class HAPServer implements HTTPHandler {
         }
     }
 
-    private async handlePairVerifyStepOne(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: TLVMap) {
-        const tlvTypes = [TLVTypes.PublicKey];
+    private async handlePairVerifyStepOne(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap) {
+        const tlvTypes = [TLVType.PublicKey];
         if (!this.assignTLVContains(body, tlvTypes)) {
-            response.writeHead(HTTPStatusCodes.BadRequest);
+            response.writeHead(HTTPStatusCode.BadRequest);
             return;
         }
 
-        const clientPublicKey = body.get(TLVTypes.PublicKey);
+        const clientPublicKey = body.get(TLVType.PublicKey);
 
         const keyPair = sodium.api.crypto_sign_ed25519_keypair();
         if (!keyPair) {
@@ -565,8 +559,8 @@ export class HAPServer implements HTTPHandler {
         const sessionKey = hkdf('sha512', sharedSecret, pairVerifyEncryptSalt, pairVerifyEncryptInfo, 32);
 
         const subTLV = new Map();
-        subTLV.set(TLVTypes.Identifier, accessoryPairingId);
-        subTLV.set(TLVTypes.Signature, accessorySignature);
+        subTLV.set(TLVType.Identifier, accessoryPairingId);
+        subTLV.set(TLVType.Signature, accessorySignature);
         const subTLVData = tlv.encode(subTLV);
 
         const nonce = Buffer.concat([Buffer.from([0x00, 0x00, 0x00, 0x00]), Buffer.from('PV-Msg02')]);
@@ -576,11 +570,11 @@ export class HAPServer implements HTTPHandler {
         }
 
         const responseTLV: tlv.TLVMap = new Map();
-        responseTLV.set(TLVTypes.State, Buffer.from([VerifyState.M2]));
-        responseTLV.set(TLVTypes.PublicKey, accessoryPublicKey);
-        responseTLV.set(TLVTypes.EncryptedData, encryptedSubTLV);
+        responseTLV.set(TLVType.State, Buffer.from([VerifyState.M2]));
+        responseTLV.set(TLVType.PublicKey, accessoryPublicKey);
+        responseTLV.set(TLVType.EncryptedData, encryptedSubTLV);
 
-        response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8 });
+        response.writeHead(HTTPStatusCode.OK, { 'Content-Type': ContentType.TLV8 });
         response.write(tlv.encode(responseTLV));
 
         session.verifyContext.state = VerifyState.M2;
@@ -590,14 +584,14 @@ export class HAPServer implements HTTPHandler {
         session.verifyContext.sessionKey = sessionKey;
     }
 
-    private async handlePairVerifyStepThree(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: TLVMap) {
-        const tlvTypes = [TLVTypes.EncryptedData];
+    private async handlePairVerifyStepThree(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap) {
+        const tlvTypes = [TLVType.EncryptedData];
         if (!this.assignTLVContains(body, tlvTypes)) {
-            response.writeHead(HTTPStatusCodes.BadRequest);
+            response.writeHead(HTTPStatusCode.BadRequest);
             return;
         }
 
-        const encryptedData = body.get(TLVTypes.EncryptedData);
+        const encryptedData = body.get(TLVType.EncryptedData);
 
         // Decrypt sub-tlv.
         const sessionKey = session.verifyContext.sessionKey;
@@ -607,32 +601,32 @@ export class HAPServer implements HTTPHandler {
             session.verifyContext = defaultSession.verifyContext;
 
             const responseTLV: tlv.TLVMap = new Map();
-            responseTLV.set(TLVTypes.State, Buffer.from([VerifyState.M4]));
-            responseTLV.set(TLVTypes.Error, Buffer.from([ErrorCodes.Authentication]));
+            responseTLV.set(TLVType.State, Buffer.from([VerifyState.M4]));
+            responseTLV.set(TLVType.Error, Buffer.from([PairErrorCode.Authentication]));
 
-            response.writeHead(HTTPStatusCodes.BadRequest, { 'Content-Type': HAPContentTypes.TLV8 });
+            response.writeHead(HTTPStatusCode.BadRequest, { 'Content-Type': ContentType.TLV8 });
             response.write(tlv.encode(responseTLV));
             return;
         }
 
         // Decode sub-tlv.
         const subTLV = tlv.decode(decryptedData);
-        const subTLVTypes = [TLVTypes.Identifier, TLVTypes.Signature];
+        const subTLVTypes = [TLVType.Identifier, TLVType.Signature];
         if (!this.assignTLVContains(subTLV, subTLVTypes)) {
-            response.writeHead(HTTPStatusCodes.BadRequest);
+            response.writeHead(HTTPStatusCode.BadRequest);
             return;
         }
 
-        const devicePairingId = subTLV.get(TLVTypes.Identifier);
+        const devicePairingId = subTLV.get(TLVType.Identifier);
         console.log('devicePairingId', devicePairingId.toString());
-        const deviceSignature = subTLV.get(TLVTypes.Signature);
+        const deviceSignature = subTLV.get(TLVType.Signature);
         const deviceLongTimePublicKey = await this.storage.getControllerLongTimePublicKey(devicePairingId.toString());
         if (!deviceLongTimePublicKey) {
             const responseTLV: tlv.TLVMap = new Map();
-            responseTLV.set(TLVTypes.State, Buffer.from([VerifyState.M4]));
-            responseTLV.set(TLVTypes.Error, Buffer.from([ErrorCodes.Authentication]));
+            responseTLV.set(TLVType.State, Buffer.from([VerifyState.M4]));
+            responseTLV.set(TLVType.Error, Buffer.from([PairErrorCode.Authentication]));
 
-            response.writeHead(HTTPStatusCodes.BadRequest, { 'Content-Type': HAPContentTypes.TLV8 });
+            response.writeHead(HTTPStatusCode.BadRequest, { 'Content-Type': ContentType.TLV8 });
             response.write(tlv.encode(responseTLV));
             return;
         }
@@ -647,18 +641,18 @@ export class HAPServer implements HTTPHandler {
             session.verifyContext = defaultSession.verifyContext;
 
             const responseTLV: tlv.TLVMap = new Map();
-            responseTLV.set(TLVTypes.State, Buffer.from([PairState.M6]));
-            responseTLV.set(TLVTypes.Error, Buffer.from([ErrorCodes.Authentication]));
+            responseTLV.set(TLVType.State, Buffer.from([PairSetupState.M6]));
+            responseTLV.set(TLVType.Error, Buffer.from([PairErrorCode.Authentication]));
 
-            response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8 });
+            response.writeHead(HTTPStatusCode.OK, { 'Content-Type': ContentType.TLV8 });
             response.write(tlv.encode(responseTLV));
             return;
         }
 
         const responseTLV: tlv.TLVMap = new Map();
-        responseTLV.set(TLVTypes.State, Buffer.from([VerifyState.M4]));
+        responseTLV.set(TLVType.State, Buffer.from([VerifyState.M4]));
 
-        response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8 });
+        response.writeHead(HTTPStatusCode.OK, { 'Content-Type': ContentType.TLV8 });
         response.write(tlv.encode(responseTLV));
 
 
@@ -679,100 +673,100 @@ export class HAPServer implements HTTPHandler {
     }
 
     private async handlePairings(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap): Promise<void> {
-        const tlvTypes = [TLVTypes.State, TLVTypes.Method]; //, TLVTypes.Identifier, TLVTypes.PublicKey, TLVTypes.Permissions];
+        const tlvTypes = [TLVType.State, TLVType.Method]; //, TLVType.Identifier, TLVType.PublicKey, TLVType.Permissions];
         if (!this.assignTLVContains(body, tlvTypes)) {
-            response.writeHead(HTTPStatusCodes.BadRequest);
+            response.writeHead(HTTPStatusCode.BadRequest);
             return;
         }
 
-        const state = body.get(TLVTypes.State);
-        const method = body.get(TLVTypes.Method);
+        const state = body.get(TLVType.State);
+        const method = body.get(TLVType.Method);
         /*
-                const deviceIdentifier = body.get(TLVTypes.Identifier);
-                const devicePublicKey = body.get(TLVTypes.PublicKey);
-                const devicePermissions = body.get(TLVTypes.Permissions);
+                const deviceIdentifier = body.get(TLVType.Identifier);
+                const devicePublicKey = body.get(TLVType.PublicKey);
+                const devicePermissions = body.get(TLVType.Permissions);
                 */
         console.log(method);
 
         //console.log(deviceIdentifier);
         //console.log(devicePermissions);
         const responseTLV: tlv.TLVMap = new Map();
-        responseTLV.set(TLVTypes.State, Buffer.from([0x02]));
+        responseTLV.set(TLVType.State, Buffer.from([0x02]));
 
-        response.writeHead(HTTPStatusCodes.OK, { 'Content-Type': HAPContentTypes.TLV8 });
+        response.writeHead(HTTPStatusCode.OK, { 'Content-Type': ContentType.TLV8 });
         response.write(tlv.encode(responseTLV));
     }
 
     private async handleAttributeDatabase(session: Session, request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
         const db = {
-            "accessories": [{
-                "aid": 1,
-                "services": [{
-                    "iid": 1,
-                    "type": "0000003E-0000-1000-8000-0026BB765291",
-                    "characteristics": [{
-                        "iid": 2,
-                        "type": "00000014-0000-1000-8000-0026BB765291",
-                        "perms": ["pw"],
-                        "format": "bool",
-                        "description": "Identify"
+            'accessories': [{
+                'aid': 1,
+                'services': [{
+                    'iid': 1,
+                    'type': '0000003E-0000-1000-8000-0026BB765291',
+                    'characteristics': [{
+                        'iid': 2,
+                        'type': '00000014-0000-1000-8000-0026BB765291',
+                        'perms': ['pw'],
+                        'format': 'bool',
+                        'description': 'Identify'
                     }, {
-                        "iid": 3,
-                        "type": "00000020-0000-1000-8000-0026BB765291",
-                        "perms": ["pr"],
-                        "format": "string",
-                        "value": "Sample Company",
-                        "description": "Manufacturer"
+                        'iid': 3,
+                        'type': '00000020-0000-1000-8000-0026BB765291',
+                        'perms': ['pr'],
+                        'format': 'string',
+                        'value': 'Sample Company',
+                        'description': 'Manufacturer'
                     }, {
-                        "iid": 4,
-                        "type": "00000021-0000-1000-8000-0026BB765291",
-                        "perms": ["pr"],
-                        "format": "string",
-                        "value": "Default-Model",
-                        "description": "Model"
+                        'iid': 4,
+                        'type': '00000021-0000-1000-8000-0026BB765291',
+                        'perms': ['pr'],
+                        'format': 'string',
+                        'value': 'Default-Model',
+                        'description': 'Model'
                     }, {
-                        "iid": 5,
-                        "type": "00000023-0000-1000-8000-0026BB765291",
-                        "perms": ["pr"],
-                        "format": "string",
-                        "value": "Fan",
-                        "description": "Name"
+                        'iid': 5,
+                        'type': '00000023-0000-1000-8000-0026BB765291',
+                        'perms': ['pr'],
+                        'format': 'string',
+                        'value': 'Fan',
+                        'description': 'Name'
                     }, {
-                        "iid": 6,
-                        "type": "00000030-0000-1000-8000-0026BB765291",
-                        "perms": ["pr"],
-                        "format": "string",
-                        "value": "Default-SerialNumber",
-                        "description": "Serial Number"
+                        'iid': 6,
+                        'type': '00000030-0000-1000-8000-0026BB765291',
+                        'perms': ['pr'],
+                        'format': 'string',
+                        'value': 'Default-SerialNumber',
+                        'description': 'Serial Number'
                     }]
                 }, {
-                    "iid": 7,
-                    "type": "00000040-0000-1000-8000-0026BB765291",
-                    "characteristics": [{
-                        "iid": 8,
-                        "type": "00000023-0000-1000-8000-0026BB765291",
-                        "perms": ["pr"],
-                        "format": "string",
-                        "value": "Fan",
-                        "description": "Name"
+                    'iid': 7,
+                    'type': '00000040-0000-1000-8000-0026BB765291',
+                    'characteristics': [{
+                        'iid': 8,
+                        'type': '00000023-0000-1000-8000-0026BB765291',
+                        'perms': ['pr'],
+                        'format': 'string',
+                        'value': 'Fan',
+                        'description': 'Name'
                     }, {
-                        "iid": 9,
-                        "type": "00000025-0000-1000-8000-0026BB765291",
-                        "perms": ["pr", "pw", "ev"],
-                        "format": "bool",
-                        "value": false,
-                        "description": "On"
+                        'iid': 9,
+                        'type': '00000025-0000-1000-8000-0026BB765291',
+                        'perms': ['pr', 'pw', 'ev'],
+                        'format': 'bool',
+                        'value': false,
+                        'description': 'On'
                     }, {
-                        "iid": 10,
-                        "type": "00000029-0000-1000-8000-0026BB765291",
-                        "perms": ["pr", "pw", "ev"],
-                        "format": "float",
-                        "value": 0,
-                        "description": "Rotation Speed",
-                        "unit": "percentage",
-                        "maxValue": 100,
-                        "minValue": 0,
-                        "minStep": 1
+                        'iid': 10,
+                        'type': '00000029-0000-1000-8000-0026BB765291',
+                        'perms': ['pr', 'pw', 'ev'],
+                        'format': 'float',
+                        'value': 0,
+                        'description': 'Rotation Speed',
+                        'unit': 'percentage',
+                        'maxValue': 100,
+                        'minValue': 0,
+                        'minStep': 1
                     }]
                 }]
             }]
@@ -780,7 +774,7 @@ export class HAPServer implements HTTPHandler {
 
         const out = JSON.stringify(db);
         response.writeHead(200, {
-            'Content-Type': HAPContentTypes.JSON
+            'Content-Type': ContentType.JSON
         });
 
         response.write(out);

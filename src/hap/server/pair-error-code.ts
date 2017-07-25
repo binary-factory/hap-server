@@ -1,4 +1,4 @@
-export enum ErrorCodes {
+export enum PairErrorCode {
     /** Generic error to handle unexpected errors. */
     Unknown = 0x01,
 

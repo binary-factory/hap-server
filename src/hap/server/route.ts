@@ -1,12 +1,12 @@
-import { Session } from './session';
 import * as http from 'http';
-import { HAPContentTypes } from './content-types';
-import { Urls } from './urls';
 import * as tlv from '../common/tlv/tlv';
+import { ContentType } from './content-type';
+import { Session } from './session';
+import { Urls } from './url';
 
 export interface Route {
     pathname: Urls;
     method: string;
-    contentType: HAPContentTypes;
+    contentType: ContentType;
     handler: (session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: tlv.TLVMap | any) => Promise<void>;
 }

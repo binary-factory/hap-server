@@ -1,7 +1,7 @@
-import { HAPServer } from './server/hap-server';
 import { Advertiser } from './advertiser';
-import { Service } from './service';
 import { InstanceIdPool } from './instance-id-pool';
+import { HAPServer } from './server/server';
+import { Service } from './service';
 
 export class Accessory {
 

@@ -1,9 +1,8 @@
-import { Logger } from './logger';
-import { LogLevel } from './debug-level';
-import { TLVMap } from '../hap/common/tlv/tlv';
 import * as http from 'http';
-import { TLVTypes } from '../hap/common/tlv/types';
-import { isUndefined } from 'util';
+import { TLVMap } from '../../hap/common/tlv/tlv';
+import { TLVType } from '../../hap/common/tlv/types';
+import { LogLevel } from './debug-level';
+import { Logger } from './logger';
 
 export class SimpleLogger implements Logger {
 
@@ -118,46 +117,46 @@ export class SimpleLogger implements Logger {
             tlv.forEach((value, type) => {
                 let typeLiteral: string;
                 switch (type) {
-                    case TLVTypes.Method:
+                    case TLVType.Method:
                         typeLiteral = 'Method';
                         break;
-                    case TLVTypes.Identifier:
+                    case TLVType.Identifier:
                         typeLiteral = 'Identifier';
                         break;
-                    case TLVTypes.Salt:
+                    case TLVType.Salt:
                         typeLiteral = 'Salt';
                         break;
-                    case TLVTypes.PublicKey:
+                    case TLVType.PublicKey:
                         typeLiteral = 'PublicKey';
                         break;
-                    case TLVTypes.Proof:
+                    case TLVType.Proof:
                         typeLiteral = 'Proof';
                         break;
-                    case TLVTypes.EncryptedData:
+                    case TLVType.EncryptedData:
                         typeLiteral = 'EncryptedData';
                         break;
-                    case TLVTypes.State:
+                    case TLVType.State:
                         typeLiteral = 'State';
                         break;
-                    case TLVTypes.Error:
+                    case TLVType.Error:
                         typeLiteral = 'Error';
                         break;
-                    case TLVTypes.RetryDelay:
+                    case TLVType.RetryDelay:
                         typeLiteral = 'RetryDelay';
                         break;
-                    case TLVTypes.Certificate:
+                    case TLVType.Certificate:
                         typeLiteral = 'Certificate';
                         break;
-                    case TLVTypes.Permissions:
+                    case TLVType.Permissions:
                         typeLiteral = 'Permissions';
                         break;
-                    case TLVTypes.FragmentData:
+                    case TLVType.FragmentData:
                         typeLiteral = 'FragmentData';
                         break;
-                    case TLVTypes.FragmentLast:
+                    case TLVType.FragmentLast:
                         typeLiteral = 'FragmentLast';
                         break;
-                    case TLVTypes.Seperator:
+                    case TLVType.Seperator:
                         typeLiteral = 'Seperator';
                         break;
                     default:

@@ -1,8 +1,8 @@
 import { SecureRemotePassword } from '../../crypto/srp/srp';
-import { PairState } from './pair-state';
+import { PairSetupState } from './pair-setup-state';
 
 export interface PairSetupContext {
-    state: PairState;
+    state: PairSetupState;
     srp?: SecureRemotePassword;
     sharedSecret?: Buffer;
     sessionKey?: Buffer;

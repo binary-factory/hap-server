@@ -1,6 +1,6 @@
 import { Transform } from 'stream';
-import { Logger } from '../../util/logger';
-import { SimpleLogger } from '../../util/simple-logger';
+import { Logger } from '../../util/logger/logger';
+import { SimpleLogger } from '../../util/logger/simple-logger';
 
 const sodium = require('sodium');
 

@@ -1,4 +1,4 @@
-export enum TLVTypes {
+export enum TLVType {
     /** Method to use for pairing. Format: Integer */
     Method = 0x00,
 

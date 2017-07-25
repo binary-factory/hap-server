@@ -1,4 +1,4 @@
-export enum HTTPStatusCodes {
+export enum HTTPStatusCode {
     /** Success. */
     OK = 200,
 
