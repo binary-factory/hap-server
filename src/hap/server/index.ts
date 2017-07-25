@@ -1,4 +1,5 @@
 export * from './content-type';
+export * from './frame-parser';
 export * from './pair-error-code';
 export * from './pair-method';
 export * from './pair-setup-context';

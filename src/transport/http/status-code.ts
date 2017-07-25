@@ -15,5 +15,11 @@ export enum HTTPStatusCode {
     ConnectionAuthorizationRequired = 470,
 
     /** Server had a problem, e.g. ran out of memory. */
-    InternalServerError = 500
+    InternalServerError = 500,
+
+    NotFound = 404,
+
+    UnsupportedMediaType = 415,
+
+    NoContent = 204
 }

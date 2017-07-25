@@ -5,13 +5,20 @@ import * as url from 'url';
 import { hkdf } from '../../crypto/hkdf/hkdf';
 import { SRPConfigurations } from '../../crypto/srp/configurations';
 import { SecureRemotePassword } from '../../crypto/srp/srp';
+import { AccessoryLongTimeKeyPair } from '../../entity';
 import { MemoryStorage, Storage } from '../../services';
 import { HTTPHandler, HttpServer, HTTPStatusCode } from '../../transport/http';
 import { ProxyConnection, ProxyServer } from '../../transport/proxy';
 import { Logger, LogLevel, SimpleLogger } from '../../util/logger';
+import { Accessory } from '../accessory';
+import { Advertiser } from '../advertiser';
+import { CharacteristicCapability } from '../characteristic/capability';
+import { CharacteristicConfiguration } from '../characteristic/configuration';
+import { CharacteristicFormat } from '../characteristic/format';
+import { DeviceInformation } from '../common';
+import { InstanceIdPool } from '../common/instance-id-pool';
 import { TLVType } from '../common/tlv';
 import * as tlv from '../common/tlv/tlv';
-import { AccessoryLongTimeKeyPair } from '../entity';
 import { ContentType } from './content-type';
 import { PairErrorCode } from './pair-error-code';
 import { PairMethod } from './pair-method';
@@ -43,19 +50,30 @@ export class HAPServer implements HTTPHandler {
 
     private storage: Storage = new MemoryStorage();
 
-    private proxyServer: ProxyServer = new ProxyServer((connection) => {
-        return this.createDecryptStream(connection);
-    }, (connection) => {
-        return this.createEncryptStream(connection);
-    });
+    private longTimeKeyPair: AccessoryLongTimeKeyPair;
+
+    private proxyServer: ProxyServer;
 
     private httpServer: HttpServer = new HttpServer(this);
 
+    private advertiser: Advertiser = new Advertiser(this.deviceInformation);
+
     private sessions: Map<number, Session> = new Map();
 
-    private longTimeKeyPair: AccessoryLongTimeKeyPair;
+    private accessories: Map<number, Accessory> = new Map();
 
-    public constructor(private deviceId: string) {
+    private accessoryInstanceIdPool: InstanceIdPool = new InstanceIdPool(1);
+
+    private defaultAccessory: Accessory;
+
+    public constructor(private deviceInformation: DeviceInformation, private pinCode: string) {
+
+        // TODO: Move to property initialization and use may a "ProxyTransformProvider" interface?
+        this.proxyServer = new ProxyServer((connection) => {
+            return this.createDecryptStream(connection);
+        }, (connection) => {
+            return this.createEncryptStream(connection);
+        });
 
         this.proxyServer.on('connect', (connection) => {
             this.handleProxyConnect(connection);
@@ -64,6 +82,82 @@ export class HAPServer implements HTTPHandler {
         this.proxyServer.on('close', (rayId) => {
             this.handleProxyClose(rayId);
         });
+
+        // Push necessary default AccessoryInformation service.
+        this.defaultAccessory = this.addAccessory();
+        const accessoryInformationService = this.defaultAccessory.addService({ type: '0000003E-0000-1000-8000-0026BB765291' });
+        const characteristicIdentify: CharacteristicConfiguration = {
+            type: '00000014-0000-1000-8000-0026BB765291',
+            capabilities: [CharacteristicCapability.PairedWrite],
+            format: CharacteristicFormat.Boolean,
+            description: 'Identify'
+        };
+        const characteristicManufacturer: CharacteristicConfiguration = {
+            type: '00000020-0000-1000-8000-0026BB765291',
+            capabilities: [CharacteristicCapability.PairedRead],
+            format: CharacteristicFormat.String,
+            value: 'Manu',
+            description: 'Manufacturer'
+        };
+        const characteristicModel: CharacteristicConfiguration = {
+            type: '00000021-0000-1000-8000-0026BB765291',
+            capabilities: [CharacteristicCapability.PairedRead],
+            format: CharacteristicFormat.String,
+            // constrains: { maximumLength: 64 },
+            value: 'Model',
+            description: 'Model'
+        };
+        const characteristicName: CharacteristicConfiguration = {
+            type: '00000023-0000-1000-8000-0026BB765291',
+            capabilities: [CharacteristicCapability.PairedRead],
+            format: CharacteristicFormat.String,
+            // constrains: { maximumLength: 64 },
+            value: 'Name',
+            description: 'Name'
+        };
+        const characteristicSerialnumber: CharacteristicConfiguration = {
+            type: '00000030-0000-1000-8000-0026BB765291',
+            capabilities: [CharacteristicCapability.PairedRead],
+            format: CharacteristicFormat.String,
+            // constrains: { maximumLength: 64 },
+            value: 'Serial',
+            description: 'Serial Number'
+        };
+        /*
+                const characteristicFirmwareRevision: CharacteristicConfiguration = {
+                    type: '52',
+                    capabilities: [CharacteristicCapability.PairedRead],
+                    format: CharacteristicFormat.String,
+                    value: '1.2.3',
+                    description: 'Revision'
+                };*/
+        accessoryInformationService.addCharacteristic(characteristicIdentify);
+        accessoryInformationService.addCharacteristic(characteristicManufacturer);
+        accessoryInformationService.addCharacteristic(characteristicModel);
+        accessoryInformationService.addCharacteristic(characteristicName);
+        accessoryInformationService.addCharacteristic(characteristicSerialnumber);
+        //accessoryInformationService.addCharacteristic(characteristicFirmwareRevision);
+
+        const accessoryFanService = this.defaultAccessory.addService({ type: '00000040-0000-1000-8000-0026BB765291' });
+        const characteristicOn: CharacteristicConfiguration = {
+            type: '00000025-0000-1000-8000-0026BB765291',
+            capabilities: [CharacteristicCapability.PairedRead, CharacteristicCapability.PairedWrite, CharacteristicCapability.Events],
+            format: CharacteristicFormat.Boolean,
+            value: false,
+            description: 'On'
+        };
+        accessoryFanService.addCharacteristic(characteristicOn);
+
+        const accessoriesArray = Array.from(this.accessories.values());
+        console.log(JSON.stringify({ 'accessories': accessoriesArray }));
+    }
+
+    addAccessory(): Accessory {
+        const aid = this.accessoryInstanceIdPool.nextInstanceId();
+        const accessory = new Accessory(aid);
+
+        this.accessories.set(aid, accessory);
+        return accessory;
     }
 
     async handleRequest(request: http.IncomingMessage, response: http.ServerResponse, body: Buffer): Promise<void> {
@@ -122,22 +216,25 @@ export class HAPServer implements HTTPHandler {
                 pathname: Urls.Characteristics,
                 method: 'GET',
                 contentType: ContentType.JSON,
-                handler: () => new Promise((resolve, reject) => {
-                })
+                handler: (session, request, response, body) => {
+                    return this.handleCharacteristicRead(session, request, response, body);
+                }
             },
             {
                 pathname: Urls.Characteristics,
                 method: 'PUT',
                 contentType: ContentType.JSON,
-                handler: () => new Promise((resolve, reject) => {
-                })
+                handler: (session, request, response, body) => {
+                    return this.handleCharacteristicWrite(session, request, response, body);
+                }
             },
             {
                 pathname: Urls.Identify,
                 method: 'POST',
                 contentType: ContentType.EMPTY,
-                handler: () => new Promise((resolve, reject) => {
-                })
+                handler: (session, request, response, body) => {
+                    return this.handleIdentify(session, request, response, body);
+                }
             }
         ];
 
@@ -185,17 +282,15 @@ export class HAPServer implements HTTPHandler {
                     await matchingRoute.handler(session, request, response, parsedBody);
 
                 } else {
-                    // HTTP: Unsupported Media Type.
-                    response.writeHead(415);
+                    response.writeHead(HTTPStatusCode.UnsupportedMediaType);
                 }
 
             } else {
                 response.writeHead(HTTPStatusCode.MethodNotAllowed);
             }
         } else {
-            response.writeHead(404);
+            response.writeHead(HTTPStatusCode.NotFound);
         }
-
 
         response.end();
     }
@@ -228,18 +323,19 @@ export class HAPServer implements HTTPHandler {
         }
 
         const httpAddress = await this.httpServer.listen(0, '127.0.0.1');
+        this.logger.info(`http-server listening at: ${httpAddress.address}:${httpAddress.port}`);
 
         const proxyAddress = await this.proxyServer.listen(httpAddress.address, httpAddress.port);
+        this.logger.info(`proxy-server listening at: ${proxyAddress.address}:${proxyAddress.port}`);
 
-        return {
-            httpAddress,
-            proxyAddress
-        };
+        const service = await this.advertiser.start(proxyAddress.port);
+        this.logger.info(`advertisement started`);
     }
 
+    // TODO: Move a generic crypto namespace.
     private async getLongTimeKeyPair(): Promise<AccessoryLongTimeKeyPair> {
         // Generate accessories Ed25519 long-term public key, AccessoryLTPK, and long-term secret key, AccessoryLTSK.
-        let longTimeKeyPair = await this.storage.getAccessoryLongTimeKeyPair(this.deviceId);
+        let longTimeKeyPair = await this.storage.getAccessoryLongTimeKeyPair(this.deviceInformation.deviceId);
         if (!longTimeKeyPair) {
             const keyPair = sodium.api.crypto_sign_ed25519_keypair();
             if (!keyPair) {
@@ -294,8 +390,8 @@ export class HAPServer implements HTTPHandler {
         }
 
         const state: PairSetupState = body.get(TLVType.State).readUInt8(0);
-        if (state !== (session.pairContext.state + 1)) {
-            session.pairContext = defaultSession.pairContext; // TODO: Object.assign({}, defaultSession.pairContext)
+        if (state > (session.pairContext.state + 1)) {
+            session.pairContext = Object.assign({}, defaultSession.pairContext);
             response.writeHead(HTTPStatusCode.BadRequest);
             return;
         }
@@ -333,8 +429,8 @@ export class HAPServer implements HTTPHandler {
             // TODO: Implement.
         }
 
-        const username = 'Pair-PairSetupState'; // TODO: As property.
-        const password = '123-99-123'; // TODO: As property.
+        const username = 'Pair-Setup';
+        const password = this.pinCode;
         const serverPrivateKey = crypto.randomBytes(16);
         const salt = crypto.randomBytes(16);
         const srp = new SecureRemotePassword(username, password, salt, SRPConfigurations[3072], serverPrivateKey);
@@ -371,7 +467,7 @@ export class HAPServer implements HTTPHandler {
         const sharedSecret = srp.getSessionKey();
         const verified = srp.verifyProof(deviceSRPProof);
         if (!verified) {
-            session.pairContext = defaultSession.pairContext;
+            session.pairContext = defaultSession.pairContext; //TODO: Change everywhere Object.assign({}, defaultSession.pairContext); Or implement a reset() method?
 
             const responseTLV: tlv.TLVMap = new Map();
             responseTLV.set(TLVType.State, Buffer.from([PairSetupState.M4]));
@@ -383,8 +479,8 @@ export class HAPServer implements HTTPHandler {
         }
 
         // Derive session key from SRP shared secret.
-        const pairSetupEncryptSalt = Buffer.from('Pair-PairSetupState-Encrypt-Salt');
-        const pairSetupEncryptInfo = Buffer.from('Pair-PairSetupState-Encrypt-Info');
+        const pairSetupEncryptSalt = Buffer.from('Pair-Setup-Encrypt-Salt');
+        const pairSetupEncryptInfo = Buffer.from('Pair-Setup-Encrypt-Info');
         const sessionKey = hkdf('sha512', sharedSecret, pairSetupEncryptSalt, pairSetupEncryptInfo, 32);
 
 
@@ -439,8 +535,8 @@ export class HAPServer implements HTTPHandler {
         const deviceSignature = subTLV.get(TLVType.Signature);
 
         // Derive deviceX from the SRP shared secret.
-        const pairSetupControllerSignSalt = Buffer.from('Pair-PairSetupState-Controller-Sign-Salt');
-        const pairSetupControllerSignInfo = Buffer.from('Pair-PairSetupState-Controller-Sign-Info');
+        const pairSetupControllerSignSalt = Buffer.from('Pair-Setup-Controller-Sign-Salt');
+        const pairSetupControllerSignInfo = Buffer.from('Pair-Setup-Controller-Sign-Info');
         const deviceX = hkdf('sha512', session.pairContext.sharedSecret, pairSetupControllerSignSalt, pairSetupControllerSignInfo, 32);
 
         // Verify the signature of the constructed deviceInfo with the deviceLTPK from the decrypted sub-tlv.
@@ -462,12 +558,12 @@ export class HAPServer implements HTTPHandler {
         const accessoryLongTimePrivateKey = this.longTimeKeyPair.privateKey;
 
         // Derive AccessoryX from the SRP shared secret.
-        const pairSetupAccessorySignSalt = Buffer.from('Pair-PairSetupState-Accessory-Sign-Salt');
-        const pairSetupAccessorySignInfo = Buffer.from('Pair-PairSetupState-Accessory-Sign-Info');
+        const pairSetupAccessorySignSalt = Buffer.from('Pair-Setup-Accessory-Sign-Salt');
+        const pairSetupAccessorySignInfo = Buffer.from('Pair-Setup-Accessory-Sign-Info');
         const accessoryX = hkdf('sha512', session.pairContext.sharedSecret, pairSetupAccessorySignSalt, pairSetupAccessorySignInfo, 32);
 
         // Signing AccessorySignature.
-        const accessoryPairingId = Buffer.from(this.deviceId);
+        const accessoryPairingId = Buffer.from(this.deviceInformation.deviceId);
         const accessoryInfo = Buffer.concat([accessoryX, accessoryPairingId, accessoryLongTimePublicKey]);
         const accessorySignature = sodium.api.crypto_sign_ed25519_detached(accessoryInfo, accessoryLongTimePrivateKey);
         if (!accessorySignature) {
@@ -509,8 +605,7 @@ export class HAPServer implements HTTPHandler {
         }
 
         const state: VerifyState = body.get(TLVType.State).readUInt8(0);
-        console.log('verify step', state);
-        if (state !== (session.verifyContext.state + 1)) {
+        if (state > (session.verifyContext.state + 1)) {
             session.verifyContext = defaultSession.verifyContext;
             response.writeHead(HTTPStatusCode.BadRequest);
             return;
@@ -546,7 +641,7 @@ export class HAPServer implements HTTPHandler {
 
         const accessoryLongTimePrivateKey = this.longTimeKeyPair.privateKey;
 
-        const accessoryPairingId = Buffer.from(this.deviceId);
+        const accessoryPairingId = Buffer.from(this.deviceInformation.deviceId);
         const accessoryInfo = Buffer.concat([accessoryPublicKey, accessoryPairingId, clientPublicKey]);
         const accessorySignature = sodium.api.crypto_sign_ed25519_detached(accessoryInfo, accessoryLongTimePrivateKey);
         if (!accessorySignature) {
@@ -618,7 +713,6 @@ export class HAPServer implements HTTPHandler {
         }
 
         const devicePairingId = subTLV.get(TLVType.Identifier);
-        console.log('devicePairingId', devicePairingId.toString());
         const deviceSignature = subTLV.get(TLVType.Signature);
         const deviceLongTimePublicKey = await this.storage.getControllerLongTimePublicKey(devicePairingId.toString());
         if (!deviceLongTimePublicKey) {
@@ -667,7 +761,7 @@ export class HAPServer implements HTTPHandler {
         session.decryptStream.setKey(controllerToAccessoryKey);
         session.decryptStream.enable();
         session.encryptStream.setKey(accessoryToControllerKey);
-        session.decryptStream.once('data', () => {
+        session.decryptStream.once('data', () => { // TODO: Method params.
             session.encryptStream.enable();
         });
     }
@@ -695,88 +789,30 @@ export class HAPServer implements HTTPHandler {
 
         response.writeHead(HTTPStatusCode.OK, { 'Content-Type': ContentType.TLV8 });
         response.write(tlv.encode(responseTLV));
+        // TODO: Implement.
     }
 
     private async handleAttributeDatabase(session: Session, request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
-        const db = {
-            'accessories': [{
-                'aid': 1,
-                'services': [{
-                    'iid': 1,
-                    'type': '0000003E-0000-1000-8000-0026BB765291',
-                    'characteristics': [{
-                        'iid': 2,
-                        'type': '00000014-0000-1000-8000-0026BB765291',
-                        'perms': ['pw'],
-                        'format': 'bool',
-                        'description': 'Identify'
-                    }, {
-                        'iid': 3,
-                        'type': '00000020-0000-1000-8000-0026BB765291',
-                        'perms': ['pr'],
-                        'format': 'string',
-                        'value': 'Sample Company',
-                        'description': 'Manufacturer'
-                    }, {
-                        'iid': 4,
-                        'type': '00000021-0000-1000-8000-0026BB765291',
-                        'perms': ['pr'],
-                        'format': 'string',
-                        'value': 'Default-Model',
-                        'description': 'Model'
-                    }, {
-                        'iid': 5,
-                        'type': '00000023-0000-1000-8000-0026BB765291',
-                        'perms': ['pr'],
-                        'format': 'string',
-                        'value': 'Fan',
-                        'description': 'Name'
-                    }, {
-                        'iid': 6,
-                        'type': '00000030-0000-1000-8000-0026BB765291',
-                        'perms': ['pr'],
-                        'format': 'string',
-                        'value': 'Default-SerialNumber',
-                        'description': 'Serial Number'
-                    }]
-                }, {
-                    'iid': 7,
-                    'type': '00000040-0000-1000-8000-0026BB765291',
-                    'characteristics': [{
-                        'iid': 8,
-                        'type': '00000023-0000-1000-8000-0026BB765291',
-                        'perms': ['pr'],
-                        'format': 'string',
-                        'value': 'Fan',
-                        'description': 'Name'
-                    }, {
-                        'iid': 9,
-                        'type': '00000025-0000-1000-8000-0026BB765291',
-                        'perms': ['pr', 'pw', 'ev'],
-                        'format': 'bool',
-                        'value': false,
-                        'description': 'On'
-                    }, {
-                        'iid': 10,
-                        'type': '00000029-0000-1000-8000-0026BB765291',
-                        'perms': ['pr', 'pw', 'ev'],
-                        'format': 'float',
-                        'value': 0,
-                        'description': 'Rotation Speed',
-                        'unit': 'percentage',
-                        'maxValue': 100,
-                        'minValue': 0,
-                        'minStep': 1
-                    }]
-                }]
-            }]
-        };
+        const accessoriesArray = Array.from(this.accessories.values());
+        const responseJSON = JSON.stringify({ 'accessories': accessoriesArray });
+        response.writeHead(200, { 'Content-Type': ContentType.JSON });
+        response.write(responseJSON);
+    }
 
-        const out = JSON.stringify(db);
-        response.writeHead(200, {
-            'Content-Type': ContentType.JSON
-        });
+    private async handleCharacteristicRead(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: any): Promise<void> {
+        this.logger.debug('characteristic read', body);
+    }
 
-        response.write(out);
+    private async handleCharacteristicWrite(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: any): Promise<void> {
+        // All characteristics write operations must complete with success or failure before sending a response or handling other requests.
+        this.logger.debug('characteristic write', body);
+        response.writeHead(HTTPStatusCode.NoContent, { 'Content-Type': ContentType.JSON });
+        // TODO: Implement.
+
+    }
+
+    private async handleIdentify(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: any): Promise<void> {
+        this.logger.debug('characteristic identify', body);
+        // TODO: Implement.
     }
 }
