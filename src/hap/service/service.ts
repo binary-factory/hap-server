@@ -41,12 +41,12 @@ export class Service {
     toJSON(): Object {
         const characteristicArray = Array.from(this.characteristics.values());
         const serviceObject = {
-            'iid': this.instanceId,
-            'type': this.configuration.type,
-            'characteristics': characteristicArray,
-            'hidden': this.configuration.hidden,
-            'primary': this.configuration.primary,
-            'linked': this.linkedServices
+            iid: this.instanceId,
+            type: this.configuration.type,
+            characteristics: characteristicArray,
+            hidden: this.configuration.hidden,
+            primary: this.configuration.primary,
+            linked: this.linkedServices
         };
 
         return serviceObject;

@@ -153,9 +153,6 @@ export class HAPServer implements HTTPHandler {
             description: 'On'
         };
         accessoryFanService.addCharacteristic(characteristicOn);
-
-        const accessoriesArray = Array.from(this.accessories.values());
-        console.log(JSON.stringify({ 'accessories': accessoriesArray }));
     }
 
     addAccessory(): Accessory {
@@ -802,7 +799,8 @@ export class HAPServer implements HTTPHandler {
 
     private async handleAttributeDatabase(session: Session, request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
         const accessoriesArray = Array.from(this.accessories.values());
-        const responseJSON = JSON.stringify({ 'accessories': accessoriesArray });
+        const responseJSON = JSON.stringify({ accessories: accessoriesArray });
+
         response.writeHead(HTTPStatusCode.OK, { 'Content-Type': ContentType.JSON });
         response.write(responseJSON);
     }
@@ -1034,7 +1032,7 @@ export class HAPServer implements HTTPHandler {
         const pendingWriteTasksResult = await Promise.all(pendingWriteTasks);
         this.logger.debug('all write operations returned.');
 
-        // Assign results to readTaskResults.
+        // Assign results to writeTaskResults.
         for (let i = 0; i < pendingWriteTasksResult.length; i++) {
             const pendingWriteTaskResult = pendingWriteTasksResult[i];
             const writeTaskResult = pendingWriteTaskMappings.get(i);
@@ -1047,7 +1045,7 @@ export class HAPServer implements HTTPHandler {
 
         // Send back the result.
         if (errorCount > 0) {
-            this.logger.warn(`${errorCount} of ${body.characteristics.length} write operation failed!`);
+            this.logger.warn(`${errorCount} of ${body.characteristics.length} write operations failed!`);
 
             const responseJSON = JSON.stringify({ characteristics: writeTaskResults });
             this.logger.debug('some write operations failed!', responseJSON);

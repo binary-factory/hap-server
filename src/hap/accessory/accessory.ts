@@ -39,8 +39,8 @@ export class Accessory {
     toJSON(): Object {
         const serviceArray = Array.from(this.services.values());
         const accessoryObject = {
-            'aid': this.instanceId,
-            'services': serviceArray
+            aid: this.instanceId,
+            services: serviceArray
         };
 
         return accessoryObject;

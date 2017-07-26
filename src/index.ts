@@ -3,7 +3,7 @@ import { DeviceConfiguration } from './hap/common';
 import { HAPServer } from './hap/server';
 
 const deviceConfiguration: DeviceConfiguration = {
-    deviceId: '77:33:57:44:45:68',
+    deviceId: '77:33:57:44:45:69',
     modelName: 'Device1,1',
     primaryFunction: AccessoryCategory.Fan
 };
@@ -14,7 +14,8 @@ server.start()
         console.log('up!');
     })
     .catch((err) => console.log('error botting device', err));
-
+/*
 setInterval(() => {
     console.log('CONNECTION COUNT: ' + server['proxyServer'].getConnections().length);
 }, 2500);
+*/
