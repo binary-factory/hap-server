@@ -13,7 +13,12 @@ import { ProxyConnection, ProxyServer } from '../../transport/proxy';
 import { Logger, LogLevel, SimpleLogger } from '../../util/logger';
 import { Accessory } from '../accessory';
 import { Advertiser } from '../advertiser';
-import { CharacteristicCapability, CharacteristicConfiguration, CharacteristicFormat } from '../characteristic';
+import {
+    CharacteristicCapability,
+    CharacteristicConfiguration,
+    CharacteristicFormat,
+    CharacteristicUnit
+} from '../characteristic';
 import { CharacteristicReadValueResult } from '../characteristic/read-value-result';
 import { DeviceConfiguration, InstanceIdPool, StatusCode } from '../common';
 import { TLVType } from '../common/tlv';
@@ -806,50 +811,93 @@ export class HAPServer implements HTTPHandler {
         const query = url.parse(request.url).query;
         const characteristicRead: CharacteristicReadRequest = querystring.parse(query);
 
-        // TODO: Respect this.
+        // Parse extra query parameters.
         const includeMeta = characteristicRead.meta === '1';
         const includeCapability = characteristicRead.perms === '1';
         const includeType = characteristicRead.type === '1';
         const includeEventStatus = characteristicRead.ev === '1';
 
-        const results = [];
-        const pendingReads: Promise<CharacteristicReadValueResult>[] = [];
-        const tuples = characteristicRead.id.split(',');
-        for (const tuple of tuples) { // TODO: Validation? Check if failsafe?
-            const splitted = tuple.split('.');
-            const accessoryInstanceId = parseInt(splitted[0]);
-            const characteristicInstanceId = parseInt(splitted[1]);
-            const result = {
-                'aid': accessoryInstanceId,
-                'iid': characteristicInstanceId,
-                'status': undefined,
-                'value': undefined
-            };
-            results.push(result);
+        // Extract read tasks from query.
+        type ReadTask = {
+            accessoryInstanceId: number;
+            characteristicInstanceId: number;
+        };
+        const readTasks: ReadTask[] = [];
+        const commaSeparatedList = characteristicRead.id.split(',');
+        for (const listItem of commaSeparatedList) {
+            const dataPair = listItem.split('.');
 
-            const accessory = this.accessories.get(accessoryInstanceId);
-            if (!accessory) {
-                this.logger.warn('rejecting characteristic read: Accessory not found!');
-                result.status = StatusCode.NotFound;
+            // We expect exact two items.
+            if (dataPair.length !== 2) {
+                this.logger.warn('an item of the read request was malformed.');
                 continue;
             }
 
-            const characteristic = accessory.getCharacteristicByInstanceId(characteristicInstanceId);
+            // Parse the Ids.
+            const accessoryInstanceId = parseInt(dataPair[0]);
+            const characteristicInstanceId = parseInt(dataPair[1]);
+
+            // Check if was successful.
+            if (isNaN(accessoryInstanceId) || isNaN(characteristicInstanceId)) {
+                this.logger.warn('accessoryInstanceId or characteristicInstanceId was malformed.');
+                continue;
+            }
+
+            const readTask: ReadTask = {
+                accessoryInstanceId,
+                characteristicInstanceId
+            };
+            readTasks.push(readTask);
+        }
+
+        // Now we process each task.
+        type ReadTaskResult = {
+            aid: number;
+            iid: number;
+            status?: StatusCode;
+            value?: any;
+            format?: CharacteristicFormat;
+            unit?: CharacteristicUnit;
+            minValue?: number;
+            maxValue?: number;
+            minStep?: number;
+            maxLen?: number;
+        };
+
+        const pendingReadTasks: Promise<CharacteristicReadValueResult>[] = [];
+        const pendingReadTaskMappings: Map<number, ReadTaskResult> = new Map();
+        const readTaskResults: ReadTaskResult[] = [];
+        for (const readTask of readTasks) {
+            const readTaskResult: ReadTaskResult = {
+                aid: readTask.accessoryInstanceId,
+                iid: readTask.characteristicInstanceId
+            };
+
+            readTaskResults.push(readTaskResult);
+
+            const accessory = this.accessories.get(readTask.accessoryInstanceId);
+            if (!accessory) {
+                this.logger.warn('rejecting characteristic read: Accessory not found!');
+                readTaskResult.status = StatusCode.NotFound;
+                continue;
+            }
+
+            const characteristic = accessory.getCharacteristicByInstanceId(readTask.characteristicInstanceId);
             if (!characteristic) {
                 this.logger.warn('rejecting characteristic read: Characteristic not found!');
-                result.status = StatusCode.NotFound;
+                readTaskResult.status = StatusCode.NotFound;
                 continue;
             }
 
             if (!characteristic.isReadable()) {
                 this.logger.warn('rejecting characteristic read: Not readable!');
-                result.status = StatusCode.CannotRead;
+                readTaskResult.status = StatusCode.CannotRead;
                 continue;
             }
 
             if (characteristic.isBusy()) {
                 this.logger.warn('rejecting characteristic read: Busy!');
-                result.status = StatusCode.Busy;
+                readTaskResult.status = StatusCode.Busy;
                 continue;
             }
 
@@ -869,33 +917,41 @@ export class HAPServer implements HTTPHandler {
                 // TODO: Implement.
             }
 
-            const pendingRead = characteristic.readValue();
-            pendingReads.push(pendingRead);
+            const pendingReadTask = characteristic.readValue();
+            const length = pendingReadTasks.push(pendingReadTask);
+            const index = length - 1;
+            pendingReadTaskMappings.set(index, readTaskResult);
         }
 
-        this.logger.debug('waiting for all read operations.');
-        let errorCount = 0;
-        const readResults = await Promise.all(pendingReads);
-        for (let i = 0; i < readResults.length; i++) {
-            const readResult = readResults[i];
-            const result = results[i];
 
-            if (readResult.status === StatusCode.Success) {
-                result.value = readResult.value;
+        // Waiting for all pending read tasks to finish.
+        this.logger.debug('waiting for all read operations to complete.');
+        const pendingReadTasksResult = await Promise.all(pendingReadTasks);
+        this.logger.debug('all read operations returned.');
+
+        // Assign results to readTaskResults.
+        for (let i = 0; i < pendingReadTasksResult.length; i++) {
+            const pendingReadTaskResult = pendingReadTasksResult[i];
+            const readTaskResult = pendingReadTaskMappings.get(i);
+
+            if (pendingReadTaskResult.status === StatusCode.Success) {
+                readTaskResult.value = pendingReadTaskResult.value;
             } else {
-                result.status = readResult.status;
-                errorCount++;
+                readTaskResult.status = pendingReadTaskResult.status;
             }
         }
-        this.logger.debug('all read operations complete.');
 
-        const responseJSON = JSON.stringify({ 'characteristics': results });
+        // Now we count the unsuccessful read operations.
+        const errorCount = readTaskResults.filter((readTaskResult) => readTaskResult.hasOwnProperty('status')).length;
+
+        // Send back the result.
+        const responseJSON = JSON.stringify({ characteristics: readTaskResults });
         if (errorCount > 0) {
-            this.logger.warn(`${errorCount} of ${body.characteristics.length} read operation failed!`);
+            this.logger.warn(`${errorCount} of ${readTaskResults.length} read operations failed!`);
             response.writeHead(HTTPStatusCode.MultiStatus, { 'Content-Type': ContentType.JSON });
 
         } else {
-            this.logger.debug('all read operation succeeded!');
+            this.logger.debug('all read operations succeeded!');
             response.writeHead(HTTPStatusCode.OK, { 'Content-Type': ContentType.JSON });
         }
 
@@ -903,85 +959,104 @@ export class HAPServer implements HTTPHandler {
     }
 
     private async handleCharacteristicWrite(session: Session, request: http.IncomingMessage, response: http.ServerResponse, body: CharacteristicWriteRequest): Promise<void> {
-        // All characteristics write operations must complete with success or failure before sending a response or handling other requests.
-        this.logger.debug('characteristic write', body);
+        const writeTasks = body.characteristics;
 
-        const pendingWrites: Promise<StatusCode>[] = [];
-        const results = [];
-        for (const characteristicWrite of body.characteristics) {
-            const result = {
-                'aid': characteristicWrite.aid,
-                'iid': characteristicWrite.iid,
-                'status': undefined
+        type WriteTaskResult = {
+            aid: number;
+            iid: number;
+            status?: StatusCode;
+        };
+
+        const pendingWriteTasks: Promise<StatusCode>[] = [];
+        const pendingWriteTaskMappings: Map<number, WriteTaskResult> = new Map();
+        const writeTaskResults: WriteTaskResult[] = [];
+        for (const writeTask of writeTasks) {
+            const writeTaskResult: WriteTaskResult = {
+                aid: writeTask.aid,
+                iid: writeTask.iid
             };
-            results.push(result);
 
-            const accessory = this.accessories.get(characteristicWrite.aid);
+            writeTaskResults.push(writeTaskResult);
+
+            const accessory = this.accessories.get(writeTask.aid);
             if (!accessory) {
                 this.logger.warn('rejecting characteristic write: Accessory not found!');
-                result.status = StatusCode.NotFound;
+                writeTaskResult.status = StatusCode.NotFound;
                 continue;
             }
 
-            const characteristic = accessory.getCharacteristicByInstanceId(characteristicWrite.iid);
+            const characteristic = accessory.getCharacteristicByInstanceId(writeTask.iid);
             if (!characteristic) {
                 this.logger.warn('rejecting characteristic write: Characteristic not found!');
-                result.status = StatusCode.NotFound;
+                writeTaskResult.status = StatusCode.NotFound;
                 continue;
             }
 
-            if (characteristicWrite.hasOwnProperty('value')) {
+            if (characteristic.isBusy()) {
+                this.logger.warn('rejecting characteristic write: Busy!');
+                writeTaskResult.status = StatusCode.Busy;
+                continue;
+            }
+
+            if (writeTask.hasOwnProperty('value')) {
                 // Controller want to write the value.
                 if (!characteristic.isWriteable()) {
                     this.logger.warn('rejecting characteristic write: Not writable!');
-                    result.status = StatusCode.CannotWrite;
+                    writeTaskResult.status = StatusCode.CannotWrite;
                     continue;
                 }
 
-                this.logger.debug(`writing value to: ${characteristicWrite.aid}:${characteristicWrite.iid}`);
-                const pendingWrite = characteristic.writeValue(characteristicWrite.value);
-                pendingWrites.push(pendingWrite);
+                this.logger.debug(`writing value to: ${writeTask.aid}:${writeTask.iid}`);
 
-            } else if (characteristicWrite.hasOwnProperty('ev')) {
+                const pendingWriteTask = characteristic.writeValue(writeTask.value);
+                const length = pendingWriteTasks.push(pendingWriteTask);
+                const index = length - 1;
+                pendingWriteTaskMappings.set(index, writeTaskResult);
+
+            } else if (writeTask.hasOwnProperty('ev')) {
                 // Controller wants to subscribe for notification events.
                 if (!characteristic.isNotificationSupported()) {
                     this.logger.warn('rejecting characteristic write: No event support!');
-                    result.status = StatusCode.NotificationNotSupported;
+                    writeTaskResult.status = StatusCode.NotificationNotSupported;
                     continue;
                 }
 
-                this.logger.info(`subscription to: ${characteristicWrite.aid}:${characteristicWrite.iid}`);
+                this.logger.info(`subscription to: ${writeTask.aid}:${writeTask.iid}`);
 
             } else {
-                result.status = StatusCode.InvalidRequest;
+                writeTaskResult.status = StatusCode.InvalidRequest;
             }
         }
 
-        this.logger.debug('waiting for all write operations.');
-        // Wait for all pending writes.
-        let errorCount = 0;
-        const writeResults = await Promise.all(pendingWrites);
-        for (let i = 0; i < writeResults.length; i++) {
-            const writeResult = writeResults[i];
-            const result = results[i];
 
-            result.status = writeResult;
-            if (writeResult !== StatusCode.Success) {
-                errorCount++;
-            }
+        // Waiting for all pending write tasks to finish.
+        this.logger.debug('waiting for all write operations to complete.');
+        const pendingWriteTasksResult = await Promise.all(pendingWriteTasks);
+        this.logger.debug('all write operations returned.');
+
+        // Assign results to readTaskResults.
+        for (let i = 0; i < pendingWriteTasksResult.length; i++) {
+            const pendingWriteTaskResult = pendingWriteTasksResult[i];
+            const writeTaskResult = pendingWriteTaskMappings.get(i);
+
+            writeTaskResult.status = pendingWriteTaskResult;
         }
-        this.logger.debug('finished all write operations.');
 
+        // Now we count the unsuccessful read operations.
+        const errorCount = writeTaskResults.filter((writeTaskResult) => writeTaskResult.status !== StatusCode.Success).length;
+
+        // Send back the result.
         if (errorCount > 0) {
             this.logger.warn(`${errorCount} of ${body.characteristics.length} write operation failed!`);
 
-            const responseJSON = JSON.stringify({ 'characteristics': results });
+            const responseJSON = JSON.stringify({ characteristics: writeTaskResults });
+            this.logger.debug('some write operations failed!', responseJSON);
             response.writeHead(HTTPStatusCode.MultiStatus, { 'Content-Type': ContentType.JSON });
             response.write(responseJSON);
 
         } else {
             response.writeHead(HTTPStatusCode.NoContent);
-            this.logger.debug('all write operation succeeded!', results);
+            this.logger.debug('all write operations succeeded!');
         }
     }
 

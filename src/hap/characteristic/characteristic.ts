@@ -54,7 +54,7 @@ export class Characteristic extends events.EventEmitter {
     async readValue(): Promise<CharacteristicReadValueResult> {
         const value = this.value;
         if (!this.verifyValue(value)) {
-            //log:
+            // TODO: Warn written value has invalid format!
         }
 
 
@@ -70,7 +70,7 @@ export class Characteristic extends events.EventEmitter {
     }
 
     isBusy(): boolean {
-        return false;
+        return this.busy;
     }
 
     isWriteable(): boolean {
@@ -85,14 +85,13 @@ export class Characteristic extends events.EventEmitter {
         return this.configuration.capabilities.indexOf(CharacteristicCapability.Events) > -1;
     }
 
-    // TODO: That can be easier!
     toJSON(): Object {
         // Required properties.
         let characteristicObject = {
-            'iid': this.instanceId,
-            'type': this.configuration.type,
-            'perms': this.configuration.capabilities,
-            'format': this.configuration.format
+            iid: this.instanceId,
+            type: this.configuration.type,
+            perms: this.configuration.capabilities,
+            format: this.configuration.format
         };
 
         // Conditional properties.
@@ -100,40 +99,40 @@ export class Characteristic extends events.EventEmitter {
             return capability === CharacteristicCapability.PairedRead;
         });
         if (hasPairedReadCapability) {
-            characteristicObject = Object.assign(characteristicObject, { 'value': this.configuration.value });
+            characteristicObject = Object.assign(characteristicObject, { value: this.configuration.value });
         }
 
         // Optional properties.
         if (this.configuration.unit) {
-            characteristicObject = Object.assign(characteristicObject, { 'unit': this.configuration.unit });
+            characteristicObject = Object.assign(characteristicObject, { unit: this.configuration.unit });
         }
 
         if (this.configuration.eventNotifications) {
-            characteristicObject = Object.assign(characteristicObject, { 'ev': this.configuration.eventNotifications });
+            characteristicObject = Object.assign(characteristicObject, { ev: this.configuration.eventNotifications });
         }
 
         if (this.configuration.description) {
-            characteristicObject = Object.assign(characteristicObject, { 'description': this.configuration.description });
+            characteristicObject = Object.assign(characteristicObject, { description: this.configuration.description });
         }
 
         if (this.configuration.constrains && this.configuration.constrains.minimumValue) {
-            characteristicObject = Object.assign(characteristicObject, { 'minValue': this.configuration.constrains.minimumValue });
+            characteristicObject = Object.assign(characteristicObject, { minValue: this.configuration.constrains.minimumValue });
         }
 
         if (this.configuration.constrains && this.configuration.constrains.maximumValue) {
-            characteristicObject = Object.assign(characteristicObject, { 'maxValue': this.configuration.constrains.maximumValue });
+            characteristicObject = Object.assign(characteristicObject, { maxValue: this.configuration.constrains.maximumValue });
         }
 
         if (this.configuration.constrains && this.configuration.constrains.minimumStep) {
-            characteristicObject = Object.assign(characteristicObject, { 'minStep': this.configuration.constrains.minimumStep });
+            characteristicObject = Object.assign(characteristicObject, { minStep: this.configuration.constrains.minimumStep });
         }
 
         if (this.configuration.constrains && this.configuration.constrains.maximumLength) {
-            characteristicObject = Object.assign(characteristicObject, { 'maxLen': this.configuration.constrains.maximumLength });
+            characteristicObject = Object.assign(characteristicObject, { maxLen: this.configuration.constrains.maximumLength });
         }
 
         if (this.configuration.constrains && this.configuration.constrains.maximumDataLength) {
-            characteristicObject = Object.assign(characteristicObject, { 'maxDataLen': this.configuration.constrains.maximumDataLength });
+            characteristicObject = Object.assign(characteristicObject, { maxDataLen: this.configuration.constrains.maximumDataLength });
         }
 
         if (this.configuration.constrains && this.configuration.constrains.validValues) {
