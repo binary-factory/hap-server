@@ -1,5 +1,5 @@
 import { Characteristic } from '../characteristic';
-import { InstanceIdPool } from '../common/instance-id-pool';
+import { InstanceIdPool } from '../common';
 import { Service, ServiceConfiguration } from '../service';
 
 export class Accessory {

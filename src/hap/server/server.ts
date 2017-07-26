@@ -89,24 +89,27 @@ export class HAPServer implements HTTPHandler {
             this.handleProxyClose(rayId);
         });
 
+        this.httpServer.getNativeServer().setTimeout(0, () => {
+        });
+
         // Push necessary default AccessoryInformation service.
         this.defaultAccessory = this.addAccessory();
         const accessoryInformationService = this.defaultAccessory.addService({ type: '0000003E-0000-1000-8000-0026BB765291' });
         const characteristicIdentify: CharacteristicConfiguration = {
-            type: '00000014-0000-1000-8000-0026BB765291',
+            type: '14',
             capabilities: [CharacteristicCapability.PairedWrite],
             format: CharacteristicFormat.Boolean,
             description: 'Identify'
         };
         const characteristicManufacturer: CharacteristicConfiguration = {
-            type: '00000020-0000-1000-8000-0026BB765291',
+            type: '20',
             capabilities: [CharacteristicCapability.PairedRead],
             format: CharacteristicFormat.String,
             value: 'Manu',
             description: 'Manufacturer'
         };
         const characteristicModel: CharacteristicConfiguration = {
-            type: '00000021-0000-1000-8000-0026BB765291',
+            type: '21',
             capabilities: [CharacteristicCapability.PairedRead],
             format: CharacteristicFormat.String,
             // constrains: { maximumLength: 64 },
@@ -114,7 +117,7 @@ export class HAPServer implements HTTPHandler {
             description: 'Model'
         };
         const characteristicName: CharacteristicConfiguration = {
-            type: '00000023-0000-1000-8000-0026BB765291',
+            type: '23',
             capabilities: [CharacteristicCapability.PairedRead],
             format: CharacteristicFormat.String,
             // constrains: { maximumLength: 64 },
@@ -122,7 +125,7 @@ export class HAPServer implements HTTPHandler {
             description: 'Name'
         };
         const characteristicSerialnumber: CharacteristicConfiguration = {
-            type: '00000030-0000-1000-8000-0026BB765291',
+            type: '30',
             capabilities: [CharacteristicCapability.PairedRead],
             format: CharacteristicFormat.String,
             // constrains: { maximumLength: 64 },
@@ -144,7 +147,7 @@ export class HAPServer implements HTTPHandler {
         accessoryInformationService.addCharacteristic(characteristicSerialnumber);
         //accessoryInformationService.addCharacteristic(characteristicFirmwareRevision);
 
-        const accessoryFanService = this.defaultAccessory.addService({ type: '00000040-0000-1000-8000-0026BB765291' });
+        const accessoryFanService = this.defaultAccessory.addService({ type: '40' });
         const characteristicOn: CharacteristicConfiguration = {
             type: '00000025-0000-1000-8000-0026BB765291',
             capabilities: [CharacteristicCapability.PairedRead, CharacteristicCapability.PairedWrite, CharacteristicCapability.Events],
@@ -1020,6 +1023,7 @@ export class HAPServer implements HTTPHandler {
                 }
 
                 this.logger.info(`subscription to: ${writeTask.aid}:${writeTask.iid}`);
+                writeTaskResult.status = StatusCode.Success;
 
             } else {
                 writeTaskResult.status = StatusCode.InvalidRequest;
