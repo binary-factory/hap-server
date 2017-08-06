@@ -3,9 +3,9 @@ import { DeviceConfiguration } from './hap/common';
 import { HAPServer } from './hap/server';
 
 const deviceConfiguration: DeviceConfiguration = {
-    deviceId: '77:33:57:44:45:73',
-    modelName: 'Olva ',
-    primaryFunction: AccessoryCategory.Fan
+    deviceId: '12:33:57:44:45:78',
+    modelName: 'Olva2',
+    primaryFunction: AccessoryCategory.Lightbulb
 };
 const pinCode = '123-99-123';
 const server = new HAPServer(deviceConfiguration, pinCode);
