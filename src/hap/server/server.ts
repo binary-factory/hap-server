@@ -2,7 +2,7 @@ import * as http from 'http';
 import * as querystring from 'querystring';
 import { Transform } from 'stream';
 import * as url from 'url';
-import { hkdf } from '../../crypto/hkdf/hkdf';
+import { hkdf } from '../../crypto/hkdf';
 import { AccessoryLongTimeKeyPair } from '../../entity';
 import { MemoryStorage, Storage } from '../../services';
 import { HTTPHandler, HttpServer, HTTPStatusCode } from '../../transport/http';

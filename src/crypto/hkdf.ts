@@ -14,7 +14,7 @@ export function hkdf(algorithm: string, material: Buffer, salt: Buffer, info: Bu
         const input = Buffer.concat([
             previous,
             info,
-            Buffer.from([i+1])
+            Buffer.from([i + 1])
         ]);
 
         const hmac = crypto
