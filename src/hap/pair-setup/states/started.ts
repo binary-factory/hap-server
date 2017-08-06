@@ -1,4 +1,4 @@
-import { hkdf } from '../../../crypto/hkdf';
+import { hkdf } from '../../../crypto';
 import { AuthenticationError } from '../errors/authentication';
 import { MaxTriesError } from '../errors/max-tries';
 import { PairSetupState } from '../state';

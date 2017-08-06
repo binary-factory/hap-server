@@ -9,9 +9,9 @@ export class PairSetupStateInitial extends PairSetupState {
 
     start(setupCode?: string): StartResponse {
         const username = 'Pair-Setup';
+        const salt = crypto.randomBytes(16);
         const configuration = SRPConfigurations[3072];
         const privateKey = crypto.randomBytes(16);
-        const salt = crypto.randomBytes(16);
 
         let password: string;
         if (setupCode) {
