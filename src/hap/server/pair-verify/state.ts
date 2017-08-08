@@ -7,10 +7,10 @@ export abstract class PairVerifyState {
     }
 
     start(): PairVerifyStartResponse {
-
+        throw new Error('operation not allowed in this state.');
     }
 
     finish(): PairVerifyFinishResponse {
-
+        throw new Error('operation not allowed in this state.');
     }
 }

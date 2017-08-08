@@ -1,2 +1,2 @@
 export * from './tlv';
-export * from './types';
+export * from '../../hap/constants/types';

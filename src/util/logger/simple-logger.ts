@@ -1,6 +1,6 @@
 import * as http from 'http';
+import { TLVType } from '../../hap/constants/types';
 import { TLVMap } from '../../transport/tlv/tlv';
-import { TLVType } from '../../transport/tlv/types';
 import { LogLevel } from './debug-level';
 import { Logger } from './logger';
 

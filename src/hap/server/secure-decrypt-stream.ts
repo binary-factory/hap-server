@@ -1,5 +1,5 @@
 import { Transform } from 'stream';
-import { FrameParser } from './frame-parser';
+import { FrameParser } from './secure-layer/frame-parser';
 
 const sodium = require('sodium');
 

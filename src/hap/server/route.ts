@@ -1,6 +1,6 @@
 import * as http from 'http';
 import * as tlv from '../../transport/tlv/tlv';
-import { ContentType } from './const/content-type';
+import { ContentType } from '../constants/content-type';
 import { Session } from './session';
 import { Urls } from './url';
 

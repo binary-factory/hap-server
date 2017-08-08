@@ -2,12 +2,11 @@ import * as http from 'http';
 import * as querystring from 'querystring';
 import { Transform } from 'stream';
 import * as url from 'url';
-import { hkdf } from '../../crypto/hkdf';
+import { hkdf } from '../../crypto';
 import { AccessoryLongTimeKeyPair } from '../../entity';
 import { MemoryStorage, Storage } from '../../services';
 import { HTTPHandler, HttpServer, HTTPStatusCode } from '../../transport/http';
 import { ProxyConnection, ProxyServer } from '../../transport/proxy';
-import { TLVType } from '../../transport/tlv';
 import * as tlv from '../../transport/tlv/tlv';
 import { Logger, LogLevel, SimpleLogger } from '../../util/logger';
 import { Accessory } from '../accessory';
@@ -20,15 +19,14 @@ import {
 } from '../characteristic';
 import { CharacteristicReadValueResult } from '../characteristic/read-value-result';
 import { DeviceConfiguration, InstanceIdPool, StatusCode } from '../common';
-import { ContentType } from './const/content-type';
-import { PairErrorCode } from './const/pair-error-code';
-import { PairMethod } from './const/pair-method';
-import { PairSetupState } from './const/pair-setup-state';
-import { VerifyState } from './const/pair-verify-state';
-import { CharacteristicReadRequest } from './messages/characteristic/read-request';
-import { CharacteristicWriteRequest } from './messages/characteristic/write-request';
-import { PairSetupExchangeResponse } from './messages/pair-setup/exchange-response';
-import { PairSetupVerifyResponse } from './messages/pair-setup/verify-response';
+import { ContentType } from '../constants/content-type';
+import { PairErrorCode } from '../constants/pair-error-code';
+import { PairMethod } from '../constants/pair-method';
+import { PairSetupState } from '../constants/pair-setup-state';
+import { VerifyState } from '../constants/pair-verify-state';
+import { TLVType } from '../constants/types';
+import { CharacteristicReadRequest, CharacteristicWriteRequest } from './messages/characteristic';
+import { PairSetupExchangeResponse, PairSetupVerifyResponse } from './messages/pair-setup';
 import { PairSetupContext } from './pair-setup/context';
 import { Route } from './route';
 import { SecureDecryptStream } from './secure-decrypt-stream';
@@ -130,7 +128,7 @@ export class HAPServer implements HTTPHandler {
             description: 'Serial Number'
         };
         /*
-                const characteristicFirmwareRevision: CharacteristicConfiguration = {
+                constants characteristicFirmwareRevision: CharacteristicConfiguration = {
                     type: '52',
                     capabilities: [CharacteristicCapability.PairedRead],
                     format: CharacteristicFormat.String,
@@ -145,15 +143,15 @@ export class HAPServer implements HTTPHandler {
         //accessoryInformationService.addCharacteristic(characteristicFirmwareRevision);
 
         /*
-        const accessoryFanService = this.defaultAccessory.addService({ type: '40' });
-        const characteristicOn: CharacteristicConfiguration = {
+        constants accessoryFanService = this.defaultAccessory.addService({ type: '40' });
+        constants characteristicOn: CharacteristicConfiguration = {
             type: '00000025-0000-1000-8000-0026BB765291',
             capabilities: [CharacteristicCapability.PairedRead, CharacteristicCapability.PairedWrite, CharacteristicCapability.Events],
             format: CharacteristicFormat.Boolean,
             value: false,
             description: 'On'
         };
-        const characteristicRotationSpeed: CharacteristicConfiguration = {
+        constants characteristicRotationSpeed: CharacteristicConfiguration = {
             type: '29',
             capabilities: [CharacteristicCapability.PairedRead, CharacteristicCapability.PairedWrite, CharacteristicCapability.Events],
             format: CharacteristicFormat.Float64,
@@ -576,7 +574,7 @@ export class HAPServer implements HTTPHandler {
         response.write(tlv.encode(responseTLV));
 
         /*
-        const saved = await this.storage.persistControllerLongTimePublicKey(devicePairingId.toString(), deviceLongTimePublicKey);
+        constants saved = await this.storage.persistControllerLongTimePublicKey(devicePairingId.toString(), deviceLongTimePublicKey);
         if (!saved) {
             throw new Error('could not write device long time key to storage.');
         }
@@ -762,9 +760,9 @@ export class HAPServer implements HTTPHandler {
         const state = body.get(TLVType.State);
         const method = body.get(TLVType.Method);
         /*
-                const deviceIdentifier = body.get(TLVType.Identifier);
-                const devicePublicKey = body.get(TLVType.PublicKey);
-                const devicePermissions = body.get(TLVType.Permissions);
+                constants deviceIdentifier = body.get(TLVType.Identifier);
+                constants devicePublicKey = body.get(TLVType.PublicKey);
+                constants devicePermissions = body.get(TLVType.Permissions);
                 */
         console.log(method);
 
