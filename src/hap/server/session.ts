@@ -1,4 +1,4 @@
-import { PairSetupContext } from '../pair-setup/context';
+import { PairSetupContext } from './pair-setup/context';
 import { PairVerifyContext } from './pair-verify-context';
 import { SecureDecryptStream } from './secure-decrypt-stream';
 import { SecureEncryptStream } from './secure-encrypt-stream';

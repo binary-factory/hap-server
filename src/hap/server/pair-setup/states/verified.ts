@@ -1,13 +1,13 @@
-import { chacha20poly1305, ed25519, hkdf } from '../../../crypto';
-import * as tlv from '../../common/tlv';
-import { TLVType } from '../../common/tlv';
+import { chacha20poly1305, ed25519, hkdf } from '../../../../crypto';
+import * as tlv from '../../../../transport/tlv';
+import { TLVType } from '../../../../transport/tlv';
+import { PairSetupExchangeResponse } from '../../messages/pair-setup/exchange-response';
 import { AuthenticationError } from '../errors/authentication';
-import { ExchangeResponse } from '../exchange-response';
 import { PairSetupState } from '../state';
 import { PairSetupStateFinished } from './finished';
 
 export class PairSetupStateVerified extends PairSetupState {
-    exchange(encryptedData: Buffer, accessoryLongTimePublicKey: Buffer, accessoryLongTimePrivateKey: Buffer, accessoryPairingId: Buffer): ExchangeResponse {
+    exchange(encryptedData: Buffer, accessoryLongTimePublicKey: Buffer, accessoryLongTimePrivateKey: Buffer, accessoryPairingId: Buffer): PairSetupExchangeResponse {
 
         const sessionKey = this._handle.sessionKey;
         // Decrypt sub-tlv.

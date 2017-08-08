@@ -1,4 +1,4 @@
-import { VerifyState } from './pair-verify-state';
+import { VerifyState } from './const/pair-verify-state';
 
 export interface PairVerifyContext {
     state: VerifyState;

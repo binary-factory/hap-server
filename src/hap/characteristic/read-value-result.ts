@@ -1,4 +1,4 @@
-import { StatusCode } from '../server/status-code';
+import { StatusCode } from '../server/const/status-code';
 
 export interface CharacteristicReadValueResult {
     status: StatusCode,

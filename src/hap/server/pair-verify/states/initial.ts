@@ -1,10 +1,10 @@
-import { VerifyStartResponse } from '../start-response';
+import { PairVerifyStartResponse } from '../../messages/pair-verify/start-response';
 import { PairVerifyState } from '../state';
 
 const sodium = require('sodium');
 
 export class PairVerifyInitialState extends PairVerifyState {
-    start(clientPublicKey: Buffer): VerifyStartResponse {
+    start(clientPublicKey: Buffer): PairVerifyStartResponse {
         const keyPair = sodium.api.crypto_sign_ed25519_keypair();
         if (!keyPair) {
             throw new Error('could not generate key pairs.');

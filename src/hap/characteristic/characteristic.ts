@@ -1,5 +1,5 @@
 import * as events from 'events';
-import { StatusCode } from '../server/status-code';
+import { StatusCode } from '../server/const/status-code';
 import { Service } from '../service';
 import { CharacteristicCapability } from './capability';
 import { CharacteristicConfiguration } from './configuration';

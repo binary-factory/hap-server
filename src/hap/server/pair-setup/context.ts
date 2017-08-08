@@ -1,12 +1,15 @@
-import { SecureRemotePassword } from '../../crypto/srp/srp';
-import { ExchangeResponse } from './exchange-response';
-import { StartResponse } from './start-response';
+import { SecureRemotePassword } from '../../../crypto/srp/srp';
+import { PairSetupExchangeResponse } from '../messages/pair-setup/exchange-response';
+import { PairSetupStartResponse } from '../messages/pair-setup/start-response';
+import { PairSetupVerifyResponse } from '../messages/pair-setup/verify-response';
 import { PairSetupState } from './state';
 import { PairSetupStateInitial } from './states/initial';
-import { VerifyResponse } from './verify-response';
 
 export class PairSetupContext {
     private _state: PairSetupState = new PairSetupStateInitial(this);
+    private _srp: SecureRemotePassword;
+    private _attempts: number = 0;
+    private _sessionKey: Buffer;
 
     get state(): PairSetupState {
         return this._state;
@@ -16,8 +19,6 @@ export class PairSetupContext {
         this._state = value;
     }
 
-    private _srp: SecureRemotePassword;
-
     get srp(): SecureRemotePassword {
         return this._srp;
     }
@@ -26,7 +27,6 @@ export class PairSetupContext {
         this._srp = value;
     }
 
-    private _attempts: number = 0;
 
     get attempts(): number {
         return this._attempts;
@@ -36,7 +36,6 @@ export class PairSetupContext {
         this._attempts = value;
     }
 
-    private _sessionKey: Buffer;
 
     get sessionKey(): Buffer {
         return this._sessionKey;
@@ -46,15 +45,15 @@ export class PairSetupContext {
         this._sessionKey = value;
     }
 
-    start(setupCode?: string): StartResponse {
+    start(setupCode?: string): PairSetupStartResponse {
         return this._state.start(setupCode);
     }
 
-    verify(deviceSRPPublicKey: Buffer, deviceSRPProof: Buffer): VerifyResponse {
+    verify(deviceSRPPublicKey: Buffer, deviceSRPProof: Buffer): PairSetupVerifyResponse {
         return this._state.verify(deviceSRPPublicKey, deviceSRPProof);
     }
 
-    exchange(encryptedData: Buffer, accessoryLongTimePublicKey: Buffer, accessoryLongTimePrivateKey: Buffer, accessoryPairingId: Buffer): ExchangeResponse {
+    exchange(encryptedData: Buffer, accessoryLongTimePublicKey: Buffer, accessoryLongTimePrivateKey: Buffer, accessoryPairingId: Buffer): PairSetupExchangeResponse {
         return this._state.exchange(encryptedData, accessoryLongTimePublicKey, accessoryLongTimePrivateKey, accessoryPairingId);
     }
 }

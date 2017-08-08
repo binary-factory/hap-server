@@ -1,5 +1,4 @@
-export interface StartResponse {
-    setupCode: string;
+export class PairSetupStartResponse {
     accessorySRPPublicKey: Buffer;
     accessorySRPSalt: Buffer;
 }

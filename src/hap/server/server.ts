@@ -7,6 +7,8 @@ import { AccessoryLongTimeKeyPair } from '../../entity';
 import { MemoryStorage, Storage } from '../../services';
 import { HTTPHandler, HttpServer, HTTPStatusCode } from '../../transport/http';
 import { ProxyConnection, ProxyServer } from '../../transport/proxy';
+import { TLVType } from '../../transport/tlv';
+import * as tlv from '../../transport/tlv/tlv';
 import { Logger, LogLevel, SimpleLogger } from '../../util/logger';
 import { Accessory } from '../accessory';
 import { Advertiser } from '../advertiser';
@@ -18,18 +20,16 @@ import {
 } from '../characteristic';
 import { CharacteristicReadValueResult } from '../characteristic/read-value-result';
 import { DeviceConfiguration, InstanceIdPool, StatusCode } from '../common';
-import { TLVType } from '../common/tlv';
-import * as tlv from '../common/tlv/tlv';
-import { PairSetupContext } from '../pair-setup/context';
-import { ExchangeResponse } from '../pair-setup/exchange-response';
-import { VerifyResponse } from '../pair-setup/verify-response';
-import { CharacteristicReadRequest } from './characteristic-read-request';
-import { CharacteristicWriteRequest } from './characteristic-write-request';
-import { ContentType } from './content-type';
-import { PairErrorCode } from './pair-error-code';
-import { PairMethod } from './pair-method';
-import { PairSetupState } from './pair-setup-state';
-import { VerifyState } from './pair-verify-state';
+import { ContentType } from './const/content-type';
+import { PairErrorCode } from './const/pair-error-code';
+import { PairMethod } from './const/pair-method';
+import { PairSetupState } from './const/pair-setup-state';
+import { VerifyState } from './const/pair-verify-state';
+import { CharacteristicReadRequest } from './messages/characteristic/read-request';
+import { CharacteristicWriteRequest } from './messages/characteristic/write-request';
+import { PairSetupExchangeResponse } from './messages/pair-setup/exchange-response';
+import { PairSetupVerifyResponse } from './messages/pair-setup/verify-response';
+import { PairSetupContext } from './pair-setup/context';
 import { Route } from './route';
 import { SecureDecryptStream } from './secure-decrypt-stream';
 import { SecureEncryptStream } from './secure-encrypt-stream';
@@ -516,7 +516,7 @@ export class HAPServer implements HTTPHandler {
         const deviceSRPProof = body.get(TLVType.Proof);
 
         // Verify client proof.
-        let srpVerifyResponse: VerifyResponse;
+        let srpVerifyResponse: PairSetupVerifyResponse;
         try {
             srpVerifyResponse = session.pairContext.verify(deviceSRPPublicKey, deviceSRPProof);
         } catch (ex) {
@@ -555,7 +555,7 @@ export class HAPServer implements HTTPHandler {
 
         const ltkp = await this.getLongTimeKeyPair();
 
-        let srpExchangeResponse: ExchangeResponse;
+        let srpExchangeResponse: PairSetupExchangeResponse;
         try {
             srpExchangeResponse = session.pairContext.exchange(encryptedData, ltkp.publicKey, ltkp.privateKey, Buffer.from(this.configuration.deviceId));
         } catch (ex) {

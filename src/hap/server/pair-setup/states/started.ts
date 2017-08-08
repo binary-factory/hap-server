@@ -1,12 +1,12 @@
-import { hkdf } from '../../../crypto';
+import { hkdf } from '../../../../crypto';
+import { PairSetupVerifyResponse } from '../../messages/pair-setup/verify-response';
 import { AuthenticationError } from '../errors/authentication';
 import { MaxTriesError } from '../errors/max-tries';
 import { PairSetupState } from '../state';
-import { VerifyResponse } from '../verify-response';
 import { PairSetupStateVerified } from './verified';
 
 export class PairSetupStateStarted extends PairSetupState {
-    verify(deviceSRPPublicKey: Buffer, deviceSRPProof: Buffer): VerifyResponse {
+    verify(deviceSRPPublicKey: Buffer, deviceSRPProof: Buffer): PairSetupVerifyResponse {
 
         if (this._handle.attempts >= 100) {
             throw new MaxTriesError();
