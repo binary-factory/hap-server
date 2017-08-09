@@ -1,7 +1,7 @@
 import * as crypto from 'crypto';
 import { SRPConfigurations } from '../../../../crypto/srp/configurations';
 import { SecureRemotePassword } from '../../../../crypto/srp/srp';
-import { PairSetupStartResponse } from '../../messages/pair-setup/start-response';
+import { PairSetupStartResponse } from '../../messages/pair-setup';
 import { PairSetupState } from '../state';
 import { PairSetupStateStarted } from './started';
 

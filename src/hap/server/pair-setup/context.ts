@@ -1,7 +1,5 @@
 import { SecureRemotePassword } from '../../../crypto/srp/srp';
-import { PairSetupExchangeResponse } from '../messages/pair-setup/exchange-response';
-import { PairSetupStartResponse } from '../messages/pair-setup/start-response';
-import { PairSetupVerifyResponse } from '../messages/pair-setup/verify-response';
+import { PairSetupExchangeResponse, PairSetupStartResponse, PairSetupVerifyResponse } from '../messages/pair-setup';
 import { PairSetupState } from './state';
 import { PairSetupStateInitial } from './states/initial';
 
@@ -27,7 +25,6 @@ export class PairSetupContext {
         this._srp = value;
     }
 
-
     get attempts(): number {
         return this._attempts;
     }
@@ -35,7 +32,6 @@ export class PairSetupContext {
     set attempts(value: number) {
         this._attempts = value;
     }
-
 
     get sessionKey(): Buffer {
         return this._sessionKey;

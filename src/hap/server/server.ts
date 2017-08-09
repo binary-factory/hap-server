@@ -8,7 +8,7 @@ import { MemoryStorage, Storage } from '../../services';
 import { HTTPHandler, HttpServer, HTTPStatusCode } from '../../transport/http';
 import { ProxyConnection, ProxyServer } from '../../transport/proxy';
 import * as tlv from '../../transport/tlv/tlv';
-import { Logger, LogLevel, SimpleLogger } from '../../util/logger';
+import { Logger, SimpleLogger } from '../../util/logger';
 import { Accessory } from '../accessory';
 import { Advertiser } from '../advertiser';
 import {
@@ -25,14 +25,14 @@ import { PairMethod } from '../constants/pair-method';
 import { PairSetupState } from '../constants/pair-setup-state';
 import { VerifyState } from '../constants/pair-verify-state';
 import { TLVType } from '../constants/types';
+import { HAPRequest } from './hap-request';
 import { CharacteristicReadRequest, CharacteristicWriteRequest } from './messages/characteristic';
 import { PairSetupExchangeResponse, PairSetupVerifyResponse } from './messages/pair-setup';
 import { PairSetupContext } from './pair-setup/context';
-import { Route } from './route';
+import { Router, RouterHandler } from './router';
 import { SecureDecryptStream } from './secure-decrypt-stream';
 import { SecureEncryptStream } from './secure-encrypt-stream';
 import { Session } from './session';
-import { Urls } from './url';
 
 const sodium = require('sodium');
 
@@ -45,7 +45,7 @@ const defaultSession: Session = {
 };
 
 
-export class HAPServer implements HTTPHandler {
+export class HAPServer implements HTTPHandler, RouterHandler {
 
     private logger: Logger = new SimpleLogger('HAPServer');
 
@@ -56,6 +56,8 @@ export class HAPServer implements HTTPHandler {
     private proxyServer: ProxyServer;
 
     private httpServer: HttpServer = new HttpServer(this);
+
+    private router: Router = new Router(this);
 
     private advertiser: Advertiser = new Advertiser(this.configuration);
 
@@ -170,13 +172,21 @@ export class HAPServer implements HTTPHandler {
         const accessoryLightbulbService = this.defaultAccessory.addService({ type: '43' });
         const characteristicOn: CharacteristicConfiguration = {
             type: '25',
-            capabilities: [CharacteristicCapability.PairedRead, CharacteristicCapability.PairedWrite, CharacteristicCapability.Events],
+            capabilities: [
+                CharacteristicCapability.PairedRead,
+                CharacteristicCapability.PairedWrite,
+                CharacteristicCapability.Events
+            ],
             format: CharacteristicFormat.Boolean,
             value: false
         };
         const characteristicBrightness: CharacteristicConfiguration = {
             type: '8',
-            capabilities: [CharacteristicCapability.PairedRead, CharacteristicCapability.PairedWrite, CharacteristicCapability.Events],
+            capabilities: [
+                CharacteristicCapability.PairedRead,
+                CharacteristicCapability.PairedWrite,
+                CharacteristicCapability.Events
+            ],
             format: CharacteristicFormat.Int32,
             unit: CharacteristicUnit.Percentage,
             constrains: {
@@ -188,7 +198,11 @@ export class HAPServer implements HTTPHandler {
         };
         const characteristicHue: CharacteristicConfiguration = {
             type: '13',
-            capabilities: [CharacteristicCapability.PairedRead, CharacteristicCapability.PairedWrite, CharacteristicCapability.Events],
+            capabilities: [
+                CharacteristicCapability.PairedRead,
+                CharacteristicCapability.PairedWrite,
+                CharacteristicCapability.Events
+            ],
             format: CharacteristicFormat.Float64,
             unit: CharacteristicUnit.Arcdegrees,
             constrains: {
@@ -200,7 +214,11 @@ export class HAPServer implements HTTPHandler {
         };
         const characteristicSaturation: CharacteristicConfiguration = {
             type: '2F',
-            capabilities: [CharacteristicCapability.PairedRead, CharacteristicCapability.PairedWrite, CharacteristicCapability.Events],
+            capabilities: [
+                CharacteristicCapability.PairedRead,
+                CharacteristicCapability.PairedWrite,
+                CharacteristicCapability.Events
+            ],
             format: CharacteristicFormat.Float64,
             unit: CharacteristicUnit.Percentage,
             constrains: {
@@ -239,126 +257,38 @@ export class HAPServer implements HTTPHandler {
             return;
         }
 
-        // Route request.
-        const requestPathname = url.parse(request.url).pathname;
-        const requestMethod = request.method;
-        const requestContentType = request.headers['content-type'] || ContentType.EMPTY;
-        // TODO: Build only once.
-        const routes: Route[] = [
-            {
-                pathname: Urls.PairSetup,
-                method: 'POST',
-                contentType: ContentType.TLV8,
-                handler: (session, request, response, body) => {
-                    return this.handlePairSetup(session, request, response, body);
-                }
-            },
-            {
-                pathname: Urls.PairVerify,
-                method: 'POST',
-                contentType: ContentType.TLV8,
-                handler: (session, request, response, body) => {
-                    return this.handlePairVerify(session, request, response, body);
-                }
-            },
-            {
-                pathname: Urls.Pairings,
-                method: 'POST',
-                contentType: ContentType.TLV8,
-                handler: (session, request, response, body) => {
-                    return this.handlePairings(session, request, response, body);
-                }
-            },
-            {
-                pathname: Urls.Accessories,
-                method: 'GET',
-                contentType: ContentType.EMPTY,
-                handler: (session, request, response, body) => {
-                    return this.handleAttributeDatabase(session, request, response);
-                }
-            },
-            {
-                pathname: Urls.Characteristics,
-                method: 'GET',
-                contentType: ContentType.EMPTY,
-                handler: (session, request, response, body) => {
-                    return this.handleCharacteristicRead(session, request, response, body);
-                }
-            },
-            {
-                pathname: Urls.Characteristics,
-                method: 'PUT',
-                contentType: ContentType.JSON,
-                handler: (session, request, response, body) => {
-                    return this.handleCharacteristicWrite(session, request, response, body);
-                }
-            },
-            {
-                pathname: Urls.Identify,
-                method: 'POST',
-                contentType: ContentType.EMPTY,
-                handler: (session, request, response, body) => {
-                    return this.handleIdentify(session, request, response, body);
-                }
-            }
-        ];
+        const hapRequest: HAPRequest = {
+            proxyConnection,
+            session,
+            rawBody: body,
+            http: request
+        };
 
-        this.logger.info('Request on Ray:', proxyConnection.rayId);
-        this.logger.logRequest(LogLevel.Info, request);
 
-        // Math pathname.
-        let matching: Route[] = routes.filter((route) => route.pathname === requestPathname);
-        if (matching.length) {
-            // Math method.
-            matching = matching.filter((route) => {
-                return route.method === requestMethod;
-            });
-            if (matching.length) {
-                // Match content-type.
-                matching = matching.filter((route) => {
-                    return route.contentType === requestContentType;
-                });
-                if (matching.length) {
-                    // There should be only one route left.
-                    const matchingRoute = matching[0];
-
-                    // Parse body if not empty.
-                    let parsedBody: TLVType | any;
-                    if (body.length > 0) {
-                        try {
-                            if (matchingRoute.contentType === ContentType.TLV8) {
-                                this.logger.debug('parse body as TLV');
-                                parsedBody = tlv.decode(body);
-                                this.logger.logTLV(LogLevel.Debug, parsedBody);
-                            } else if (matchingRoute.contentType === ContentType.JSON) {
-                                this.logger.debug('parse body as JSON');
-                                parsedBody = JSON.parse(body.toString());
-                                this.logger.debug(body.toString());
-                            }
-                        } catch (err) {
-                            this.logger.error('could not parse body', err);
-                            response.writeHead(HTTPStatusCode.BadRequest);
-                        }
-                    } else {
-                        this.logger.debug('empty body');
-                    }
-
-                    // Call handler.
-                    await matchingRoute.handler(session, request, response, parsedBody);
-
-                } else {
-                    response.writeHead(HTTPStatusCode.UnsupportedMediaType);
-                }
-
-            } else {
-                response.writeHead(HTTPStatusCode.MethodNotAllowed);
-            }
-        } else {
-            this.logger.warn('unresolved route', requestPathname);
-            response.writeHead(HTTPStatusCode.NotFound);
-        }
+        await this.router.route(hapRequest, response);
 
         response.end();
+    }
+
+    async handlePairSetup(request: HAPRequest, response: http.ServerResponse) {
+    }
+
+    async handlePairVerify(request: HAPRequest, response: http.ServerResponse) {
+    }
+
+    async handlePairings(request: HAPRequest, response: http.ServerResponse) {
+    }
+
+    async handleAttributeDatabase(request: HAPRequest, response: http.ServerResponse) {
+    }
+
+    async handleCharacteristicRead(request: HAPRequest, response: http.ServerResponse) {
+    }
+
+    async handleCharacteristicWrite(request: HAPRequest, response: http.ServerResponse) {
+    }
+
+    async handleIdentify(request: HAPRequest, response: http.ServerResponse) {
     }
 
     private createDecryptStream(connection: ProxyConnection): Transform {
